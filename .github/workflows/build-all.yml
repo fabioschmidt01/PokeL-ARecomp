@@ -32,7 +32,7 @@ jobs:
           msystem: UCRT64
           update: true
           path-type: inherit
-          install: make git python nasm diffutils
+          install: make git curl tar xz diffutils zip unzip python nasm
           pacboy: clang:p lld:p gcc:p binutils:p python:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p vulkan-memory-allocator:p nasm:p diffutils:p
 
       - name: Setup Python

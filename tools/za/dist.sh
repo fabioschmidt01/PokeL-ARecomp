@@ -7,7 +7,11 @@
 # FFmpeg: the LGPL build from tools/build_deps_windows.sh (build/deps-win, made here once; MSYS2's is GPL).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-export PATH="/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH"
+[ -d "/c/msys64/ucrt64/bin" ] && export PATH="/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH"
+CURL_BIN="curl"
+command -v /c/Windows/System32/curl.exe >/dev/null 2>&1 && CURL_BIN="/c/Windows/System32/curl.exe"
+TAR_BIN="tar"
+command -v /c/Windows/System32/tar.exe >/dev/null 2>&1 && TAR_BIN="/c/Windows/System32/tar.exe"
 GENOPT="-O1 -DGUEST_VOLATILE" GENARCH=-march=x86-64-v3  # (the game code's flags: part of the library id)
 B=build/za-dist D="build/dist-za/ZA Recomp"
 
@@ -15,15 +19,15 @@ B=build/za-dist D="build/dist-za/ZA Recomp"
 ZIP_ZIG=build/zig-dl/zig-x86_64-windows-0.17.0.zip
 if [ ! -x build/zig/zig.exe ]; then
     mkdir -p build/zig-dl
-    [ -f $ZIP_ZIG ] || /c/Windows/System32/curl.exe -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o $ZIP_ZIG https://ziglang.org/download/0.17.0/zig-x86_64-windows-0.17.0.zip
+    [ -f $ZIP_ZIG ] || $CURL_BIN -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o $ZIP_ZIG https://ziglang.org/download/0.17.0/zig-x86_64-windows-0.17.0.zip
     bash tools/fetch_zig.sh
 fi
 # 1b. Intel XeSS SDK (Intel Arc AI upscaling runtime)
 if [ ! -f third_party/xess/bin/libxess.dll ]; then
     mkdir -p build/xess-dl
     ZIP_XESS=build/xess-dl/XeSS_SDK_3.0.2.zip
-    [ -f "$ZIP_XESS" ] || /c/Windows/System32/curl.exe -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o "$ZIP_XESS" https://github.com/intel/xess/releases/download/v3.0.2/XeSS_SDK_3.0.2.zip
-    /c/Windows/System32/tar.exe -xf "$ZIP_XESS" -C third_party/xess
+    [ -f "$ZIP_XESS" ] || $CURL_BIN -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o "$ZIP_XESS" https://github.com/intel/xess/releases/download/v3.0.2/XeSS_SDK_3.0.2.zip
+    $TAR_BIN -xf "$ZIP_XESS" -C third_party/xess
 fi
 
 # 2. the generator helper (its own venv: only what gen.py needs, not the randomizer's packages)
@@ -54,7 +58,7 @@ USERPROFILE="$(cygpath -w ~)" build/prompts-venv/Scripts/python.exe -m PyInstall
 build/helper/zaprompts/zaprompts.exe --xbox-attack-layout-version  # refuse a ZIP with an older/incomplete helper
 # 3. the LGPL FFmpeg, the exe (release: no console, log in lasrecomp.log) and zig with its runtime built ahead of time
 SRC_FF=build/deps-win/src/ffmpeg-9.0.2.tar.xz
-[ -f $SRC_FF ] || { mkdir -p build/deps-win/src; /c/Windows/System32/curl.exe -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o $SRC_FF https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz; }
+[ -f $SRC_FF ] || { mkdir -p build/deps-win/src; $CURL_BIN -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o $SRC_FF https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz; }
 bash tools/build_deps_windows.sh
 make -j"$(nproc)" B=$B DEPS="$PWD/build/deps-win" RELEASE=1 GENARCH="$GENARCH" GENOPT="$GENOPT" $B/lasrecomp.exe
 ! nm $B/lasrecomp.exe | grep -q ' f_70'  # (no game code inside)
@@ -91,6 +95,6 @@ PATH="$PWD/build/deps-win/bin:$PATH" ldd $B/lasrecomp.exe | awk 'tolower($3) !~ 
 ! ls "$D" | grep -iE 'x264|x265|xvid|postproc'  # (no GPL codec libraries in the release)
 du -sh "$D"
 if [ "${ZIP:-0}" = 1 ]; then
-    (cd build/dist-za && /c/Windows/System32/tar.exe -a -cf ZA-Recomp-windows.zip "ZA Recomp")
+    (cd build/dist-za && $TAR_BIN -a -cf ZA-Recomp-windows.zip "ZA Recomp")
     ls -la build/dist-za/ZA-Recomp-windows.zip
 fi
