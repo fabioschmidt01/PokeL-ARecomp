@@ -31,6 +31,7 @@ jobs:
         with:
           msystem: UCRT64
           update: true
+          path-type: inherit
           install: make git python nasm diffutils
           pacboy: clang:p lld:p gcc:p binutils:p python:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p vulkan-memory-allocator:p nasm:p diffutils:p
 
@@ -45,9 +46,8 @@ jobs:
           dotnet-version: '8.0.x'
 
       - name: Build Windows Package
-        shell: bash
+        shell: msys2 {0}
         run: |
-          export PATH="/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH"
           export ZIP=1
           bash tools/za/dist.sh
 

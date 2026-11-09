@@ -1,0 +1,15 @@
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.spec text eol=lf
+Makefile text eol=lf
+Containerfile text eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.zip binary
+*.dll binary
+*.lib binary
+*.bin binary
+*.tar.xz binary
+*.tar.gz binary

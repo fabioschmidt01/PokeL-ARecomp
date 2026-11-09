@@ -25,7 +25,7 @@ fetch https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz \
 if [ ! -f "$P/lib/libavcodec.dll.a" ]; then
     unpack ffmpeg-9.0.2.tar.xz ffmpeg
     (cd "$S/ffmpeg" && ./configure --prefix="$P" --cc=clang --cxx=clang++ --arch=x86_64 --target-os=mingw32 \
-        --enable-shared --disable-static --enable-memalign-hack --disable-asm --disable-x86asm --disable-inline-asm \
+        --enable-shared --disable-static --disable-asm --disable-x86asm --disable-inline-asm \
         --disable-autodetect --disable-programs --disable-doc --disable-network --disable-avdevice --disable-avfilter \
         --disable-swresample --disable-everything \
         --enable-protocol=file --enable-demuxer=matroska,mov \
