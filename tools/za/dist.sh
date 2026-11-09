@@ -18,9 +18,21 @@ if [ ! -x build/zig/zig.exe ]; then
     [ -f $ZIP_ZIG ] || /c/Windows/System32/curl.exe -fsSL -o $ZIP_ZIG https://ziglang.org/download/0.17.0/zig-x86_64-windows-0.17.0.zip
     bash tools/fetch_zig.sh
 fi
+# 1b. Intel XeSS SDK (Intel Arc AI upscaling runtime)
+if [ ! -f third_party/xess/bin/libxess.dll ]; then
+    mkdir -p build/xess-dl
+    ZIP_XESS=build/xess-dl/XeSS_SDK_3.0.2.zip
+    [ -f "$ZIP_XESS" ] || /c/Windows/System32/curl.exe -fsSL -o "$ZIP_XESS" https://github.com/intel/xess/releases/download/v3.0.2/XeSS_SDK_3.0.2.zip
+    /c/Windows/System32/tar.exe -xf "$ZIP_XESS" -C third_party/xess
+fi
+
 # 2. the generator helper (its own venv: only what gen.py needs, not the randomizer's packages)
+PY_CMD="python"
+if command -v py >/dev/null 2>&1 && py -3.12 --version >/dev/null 2>&1; then
+    PY_CMD="py -3.12"
+fi
 if [ ! -f build/gen-venv/.ok ]; then
-    py -3.12 -m venv build/gen-venv
+    $PY_CMD -m venv build/gen-venv
     build/gen-venv/Scripts/python.exe -m pip install -q capstone==5.0.9 unicorn==2.1.4 lz4==4.4.5 pyinstaller==6.22.3
     touch build/gen-venv/.ok
 fi
@@ -32,7 +44,7 @@ mkdir -p build/ooz
 (cd third_party/ooz && g++ -O2 -shared -static -include sys/stat.h -Dmain=ooz_main kraken.cpp bitknit.cpp lzna.cpp \
     ooz_lib.cpp -o ../../build/ooz/ooz.dll -Wl,-u,__mingw_fe_dfl_env)  # (-u: newer MinGW libmingwex needs CRT_fp10 from libmingw32)
 if [ ! -f build/prompts-venv/.ok2 ]; then  # (.ok2: texture2ddecoder, the team icons' BC7)
-    py -3.12 -m venv build/prompts-venv
+    $PY_CMD -m venv build/prompts-venv
     build/prompts-venv/Scripts/python.exe -m pip install -q pillow==13.0.0 numpy==2.5.4 fonttools==4.67.0 cffsubr==0.4.0 texture2ddecoder==1.0.6 \
         pyinstaller==6.22.3
     touch build/prompts-venv/.ok2
@@ -70,6 +82,8 @@ cp README.md LICENSE "$D/"
 mkdir -p "$D/docs"
 cp docs/XBOX-ATTACK-LAYOUT.md "$D/docs/"
 [ -f README.pt-BR.md ] && cp README.pt-BR.md "$D/"
+[ -f third_party/xess/bin/libxess.dll ] && cp third_party/xess/bin/libxess.dll "$D/"
+[ -f third_party/xess/bin/libxell.dll ] && cp third_party/xess/bin/libxell.dll "$D/"
 cp tools/za/za-default.ini "$D/za-default.ini"  # (not larecomp.ini: the first run copies it, runtime/paths.c - a new zip unzipped over an install keeps the player's own)
 # (every DLL but Windows' own and the Vulkan loader: also when copies sit next to the exe in $B, a dev setup)
 PATH="$PWD/build/deps-win/bin:$PATH" ldd $B/lasrecomp.exe | awk 'tolower($3) !~ /^\/c\/windows\// && !/vulkan-1/ {print $3}' | sort -u |

@@ -28,5 +28,10 @@ __pycache__/
 /tools/hdtools/
 # Claude Code: machine-specific notes
 CLAUDE.local.md
+# Intel XeSS SDK runtime binaries & samples (fetched automatically by tools/za/dist.sh)
+third_party/xess/bin/
+third_party/xess/samples/
+third_party/xess/doc/
+
 # screenshots taken in game (F10): game images, never committed
 /screenshots/

@@ -31,8 +31,18 @@ jobs:
         with:
           msystem: UCRT64
           update: true
-          install: make git python
-          pacboy: clang:p lld:p binutils:p python:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p vulkan-memory-allocator:p nasm:p
+          install: make git python nasm diffutils
+          pacboy: clang:p lld:p gcc:p binutils:p python:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p vulkan-memory-allocator:p nasm:p diffutils:p
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
 
       - name: Build Windows Package
         shell: bash
