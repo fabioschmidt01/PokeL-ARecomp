@@ -544,8 +544,8 @@ static void log_to_file_without_console(void) {
 static void require_cpu(void) {
     __builtin_cpu_init();
     if (__builtin_cpu_supports("sse4.2") && __builtin_cpu_supports("popcnt")) return;
-    MessageBoxA(NULL, "ZA Recomp needs a CPU with SSE4.2 (Intel Core i3/i5/i7 / 2008 or newer, AMD Bulldozer / 2011 or "
-                "newer).", "ZA Recomp", MB_ICONERROR | MB_OK);
+    MessageBoxA(NULL, "PokeL-ARecomp needs a CPU with SSE4.2 (Intel Core i3/i5/i7 / 2008 or newer, AMD Bulldozer / 2011 or "
+                "newer).", "PokeL-ARecomp", MB_ICONERROR | MB_OK);
     ExitProcess(1);
 }
 
@@ -559,7 +559,7 @@ void plat_fatal_notice(void) {
     rt_crash_explain(text, sizeof text, g_log_path);
     if (!g_log_path[0]) return;
     fflush(stderr);
-    MessageBoxA(NULL, text, "ZA Recomp", MB_ICONERROR | MB_OK);
+    MessageBoxA(NULL, text, "PokeL-ARecomp", MB_ICONERROR | MB_OK);
 }
 
 // (profiling) LARECOMP_SAMPLE=<delay s>,<duration s>: after the delay, a thread samples the instruction pointer of

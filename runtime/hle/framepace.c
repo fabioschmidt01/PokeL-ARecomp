@@ -102,3 +102,11 @@ int32_t rt_za_frame_cfg(int32_t cfg) {
     if (logged != (int)on) { logged = on; LOG("[pace] game frame mode %d -> %d (%s)\n", cfg, on ? 0 : cfg, on ? "60 fps" : "as is"); }
     return on ? 0 : cfg;
 }
+
+bool rt_pla_is_60fps(void) {
+    g_za_frame_hook = true;
+    const char *e = ENV("LARECOMP_FPS");
+    if (e) return atoi(e) >= 60;
+    return g_settings.fps60 && (g_settings.fps60_lock || fps60_holds());
+}
+

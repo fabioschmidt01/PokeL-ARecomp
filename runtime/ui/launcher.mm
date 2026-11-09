@@ -820,7 +820,12 @@ static float extract_progress(void) {
 // Builds the game code from the copied files (a few minutes); false = failed (the job line says so)
 static bool build_game_code(void) {
     int cores = SDL_GetNumLogicalCPUCores(), ram_gb = SDL_GetSystemRAM() / 1024;
-    GameBuildOpts o = {build_progress, cores < ram_gb - 2 ? cores : ram_gb - 2 > 1 ? ram_gb - 2 : 1, build_cancelled};
+    // Each compiler job needs ~2 GB RAM. Limit parallel jobs to prevent OOM termination:
+    int ram_jobs = ram_gb >= 4 ? (ram_gb - 2) / 2 : 1;
+    int jobs = cores < ram_jobs ? cores : ram_jobs;
+    if (jobs < 1) jobs = 1;
+    if (jobs > 10) jobs = 10;
+    GameBuildOpts o = {build_progress, jobs, build_cancelled};
     char why[256] = "";
     g_build_frac = 0;
     bool ok = gamebuild_run(g_root.c_str(), &o, why, sizeof why);
@@ -1297,8 +1302,8 @@ static void *mod_install_thread(void *) {
         bool exefs = false;
         std::string romfs = find_mod_romfs(base, 0, exefs);
         if (romfs.empty()) {
-            msg = exefs ? TR("This mod changes the game's code (exefs): that kind of mod doesn't work in ZA Recomp.",
-                             "Esse mod mexe no código do jogo (exefs): esse tipo de mod não funciona no ZA Recomp.")
+            msg = exefs ? TR("This mod changes the game's code (exefs/pchtxt). Performance mods like 60 FPS are already built into PokeL-ARecomp! For visual mods, use RomFS.",
+                             "Esse mod altera o código binário (exefs/pchtxt). Ajustes como 60 FPS já são nativos do PokeL-ARecomp! Para texturas e modelos, use mods com RomFS.")
                         : TR("No romfs folder in it: this doesn't look like a mod of the game's files.",
                              "Não tem pasta romfs: não parece um mod dos arquivos do jogo.");
             goto done;
@@ -2704,6 +2709,20 @@ extern "C" void launcher_run(const char *root) {
                         g_changing_folder = true;
                         pthread_mutex_lock(&g_lock);
                         g_src.clear();
+                        pthread_mutex_unlock(&g_lock);
+                    }
+                    float chg_w = ImGui::GetItemRectSize().x / g_s;
+                    if (button("##rebuild", TR("Recompile game", "Recompilar jogo"), x + pw + 14 + chg_w + 14, ty + 8, 0, 52, BTN_SECONDARY,
+                               true)) {
+                        std::string lib = g_root + "/" + GAMELIB_NAME;
+                        std::string lib_id = lib + ".id";
+                        remove(lib.c_str());
+                        remove(lib_id.c_str());
+                        pthread_mutex_lock(&g_lock);
+                        g_src = g_root;
+                        pthread_t th;
+                        pthread_create(&th, NULL, extract_thread, NULL);
+                        pthread_detach(th);
                         pthread_mutex_unlock(&g_lock);
                     }
                     party_icons_kick();

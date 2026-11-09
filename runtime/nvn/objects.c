@@ -977,6 +977,8 @@ static void present_pace(int interval) {
     static uint64_t next;
     if (forced == -2) forced = ENV("LARECOMP_PRESENT_INTERVAL") ? atoi(ENV("LARECOMP_PRESENT_INTERVAL")) : -1;
     if (forced >= 0) interval = forced;
+    extern bool rt_pla_is_60fps(void);
+    if ((g_settings.fps60 || rt_pla_is_60fps()) && interval > 1) interval = 1;
     static int logged = -12345;
     if (interval != logged) { logged = interval; LOG("[nvn] present interval %d\n", interval); }
     extern int g_out_present_interval;  // (output_scale.c: dynamic resolution's frame budget)
