@@ -116,7 +116,7 @@ bool valid_stem(const std::string &s) {
            s.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_") == std::string::npos;
 }
 std::string generation(BuildCache *c, const char *module, int chunks) {
-    need((!strcmp(module, "main") || !strcmp(module, "sdk")) && chunks > 0 && chunks <= 10000,
+    need((!strcmp(module, "main") || !strcmp(module, "sdk") || !strcmp(module, "subsdk0") || !strcmp(module, "subsdk1")) && chunks > 0 && chunks <= 10000,
          "Invalid generated module.");
     std::ostringstream out;
     out << "LASGEN1\n" << chunks << '\n';
@@ -287,7 +287,7 @@ extern "C" bool build_cache_present(const char *game_dir) {
 }
 extern "C" bool build_cache_generation(BuildCache *c, const char *module, int *chunks) {
     try {
-        need(!strcmp(module, "main") || !strcmp(module, "sdk"), "Invalid module name.");
+        need(!strcmp(module, "main") || !strcmp(module, "sdk") || !strcmp(module, "subsdk0") || !strcmp(module, "subsdk1"), "Invalid module name.");
         auto record = read(c->root / (std::string(module) + ".generation"));
         std::istringstream in(record);
         std::string magic;
