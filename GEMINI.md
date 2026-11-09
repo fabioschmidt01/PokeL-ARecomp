@@ -43,8 +43,7 @@ Para preservar o sistema operacional local limpo e sem necessidade de dezenas de
 
 - **Desenvolvimento Local Leve**: O computador local necessita apenas de [.NET SDK](https://dotnet.microsoft.com/) e [Python](https://www.python.org/) para manipulação de dados e extração do jogo.
 - **Compilação 100% no GitHub Actions**: Toda compilação pesada (Clang, UCRT64, LLVM, FFmpeg, SDL3, Zig Slim e Docker Ubuntu para AppImage) roda automaticamente na infraestrutura do GitHub.
-- **Ambiente Privado de Testes**:
-  - Repositório Privado: `fabioschmidt01/PokeL-ARecomp-privado-teste`
+- **Ambiente de Testes e Versionamento**:
   - Versionamento granular por tags (`v0.0.1`, `v0.0.2`, `v0.0.3`, `v0.0.4`...) até atingir a versão estável `0.1.0`.
   - Quando a versão 0.1 estiver testada e validada, o repositório público oficial será publicado como fork.
 
@@ -92,7 +91,7 @@ dotnet run --project tools/zaimport -- `
 
 ### Acompanhar o Status da Compilação no GitHub Actions
 ```powershell
-gh run list --repo fabioschmidt01/PokeL-ARecomp-privado-teste
+gh run list
 gh run watch <run-id>
 ```
 
