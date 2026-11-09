@@ -13,9 +13,6 @@ jobs:
   windows:
     name: Windows x64 Build
     runs-on: windows-2022
-    defaults:
-      run:
-        shell: msys2 {0}
     steps:
       - name: Configure Git Line Endings
         shell: pwsh
@@ -46,8 +43,9 @@ jobs:
           dotnet-version: '8.0.x'
 
       - name: Build Windows Package
-        shell: msys2 {0}
+        shell: bash
         run: |
+          export PATH="/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH"
           export ZIP=1
           bash tools/za/dist.sh
 
