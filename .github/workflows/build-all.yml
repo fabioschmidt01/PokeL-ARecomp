@@ -43,6 +43,18 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      - name: Cache Windows Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/deps-win
+            build/zig-dl
+            build/zig
+            build/xess-dl
+          key: pokel-deps-win-${{ hashFiles('tools/build_deps_windows.sh') }}
+          restore-keys: |
+            pokel-deps-win-
+
       - name: Build Windows Package
         shell: bash
         run: |

@@ -14,7 +14,17 @@ mkdir -p "$S"
 JOBS=$(nproc)
 
 fetch() {  # url sha256 file
-    [ -f "$S/$3" ] || curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o "$S/$3.part" "$1" && { [ -f "$S/$3" ] || mv "$S/$3.part" "$S/$3"; }
+    if [ ! -f "$S/$3" ]; then
+        for u in "$1" "https://www.ffmpeg.org/releases/$3"; do
+            if curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 --retry-connrefused --http1.1 -o "$S/$3.part" "$u"; then
+                mv "$S/$3.part" "$S/$3"
+                break
+            elif command -v /c/Windows/System32/curl.exe >/dev/null 2>&1 && /c/Windows/System32/curl.exe -fsSL --retry 5 --retry-all-errors --retry-delay 2 --retry-connrefused --http1.1 -o "$S/$3.part" "$u" 2>/dev/null; then
+                mv "$S/$3.part" "$S/$3"
+                break
+            fi
+        done
+    fi
     echo "$2  $S/$3" | sha256sum -c --quiet
 }
 unpack() { rm -rf "$S/$2" && mkdir -p "$S/$2" && tar -xf "$S/$1" -C "$S/$2" --strip-components 1; }
