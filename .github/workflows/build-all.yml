@@ -26,8 +26,9 @@ jobs:
       - name: Setup MSYS2 UCRT64 Toolchain
         uses: msys2/setup-msys2@v2
         with:
+          location: 'C:\msys64'
           msystem: UCRT64
-          update: true
+          update: false
           path-type: inherit
           install: make git curl tar xz diffutils zip unzip python nasm
           pacboy: clang:p lld:p gcc:p binutils:p python:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p vulkan-memory-allocator:p nasm:p diffutils:p
@@ -45,7 +46,13 @@ jobs:
       - name: Build Windows Package
         shell: bash
         run: |
-          export PATH="/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH"
+          unset INCLUDE LIB LIBPATH
+          if [ -d "/d/a/_temp/setup-msys2/msys64/ucrt64/bin" ]; then
+            export PATH="/d/a/_temp/setup-msys2/msys64/ucrt64/bin:/d/a/_temp/setup-msys2/msys64/usr/bin:$PATH"
+          fi
+          if [ -d "/c/msys64/ucrt64/bin" ]; then
+            export PATH="/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH"
+          fi
           export ZIP=1
           bash tools/za/dist.sh
 
@@ -63,35 +70,33 @@ jobs:
           path: build/dist-za/PokeL-ARecomp-windows-x64.zip
           if-no-files-found: error
 
-  linux:
-    name: Linux x86_64 AppImage
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Build Docker Container
-        run: docker build -t za-linux-build -f tools/linux/Containerfile tools/linux
-
-      - name: Compile AppImage
-        run: |
-          docker run --rm -v "$PWD:/src" -w /src za-linux-build bash -euo pipefail -c '
-            apt-get update
-            apt-get install -y --no-install-recommends dotnet-sdk-8.0 python3-venv
-            git config --global --add safe.directory /src
-            PYTHON=python3.12 tools/za/dist-linux.sh'
-
-      - name: Upload Linux Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: PokeL-ARecomp-linux-x86_64
-          path: build/dist/*.AppImage
-          if-no-files-found: error
+  # Linux build temporarily commented out for faster Windows iteration as requested
+  # linux:
+  #   name: Linux x86_64 AppImage
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 120
+  #   steps:
+  #     - name: Checkout Code
+  #       uses: actions/checkout@v4
+  #     - name: Build Docker Container
+  #       run: docker build -t za-linux-build -f tools/linux/Containerfile tools/linux
+  #     - name: Compile AppImage
+  #       run: |
+  #         docker run --rm -v "$PWD:/src" -w /src za-linux-build bash -euo pipefail -c '
+  #           apt-get update
+  #           apt-get install -y --no-install-recommends dotnet-sdk-8.0 python3-venv
+  #           git config --global --add safe.directory /src
+  #           PYTHON=python3.12 tools/za/dist-linux.sh'
+  #     - name: Upload Linux Artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: PokeL-ARecomp-linux-x86_64
+  #         path: build/dist/*.AppImage
+  #         if-no-files-found: error
 
   release:
     name: Publish GitHub Release
-    needs: [windows, linux]
+    needs: [windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -101,18 +106,11 @@ jobs:
           name: PokeL-ARecomp-windows-x64
           path: dist-release
 
-      - name: Download Linux Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: PokeL-ARecomp-linux-x86_64
-          path: dist-release
-
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist-release/*.zip
-            dist-release/*.AppImage
           name: "PokeL-ARecomp ${{ github.ref_name }}"
           draft: false
           prerelease: false
@@ -123,7 +121,6 @@ jobs:
             
             ### Included in this release:
             - **Windows x64**: `PokeL-ARecomp-windows-x64.zip`
-            - **Linux x86_64**: `PokeL-ARecomp-linux-x86_64.AppImage`
             
             ### Highlights:
             - Dedicated Intel Arc B580 12GB VRAM pool unlocking and Battlemage Xe2 tuning.

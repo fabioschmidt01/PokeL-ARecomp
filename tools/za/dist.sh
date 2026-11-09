@@ -7,7 +7,13 @@
 # FFmpeg: the LGPL build from tools/build_deps_windows.sh (build/deps-win, made here once; MSYS2's is GPL).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-[ -d "/c/msys64/ucrt64/bin" ] && export PATH="/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH"
+unset INCLUDE LIB LIBPATH
+if [ -d "/d/a/_temp/setup-msys2/msys64/ucrt64/bin" ]; then
+    export PATH="/d/a/_temp/setup-msys2/msys64/ucrt64/bin:/d/a/_temp/setup-msys2/msys64/usr/bin:$PATH"
+fi
+if [ -d "/c/msys64/ucrt64/bin" ]; then
+    export PATH="/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH"
+fi
 CURL_BIN="curl"
 command -v /c/Windows/System32/curl.exe >/dev/null 2>&1 && CURL_BIN="/c/Windows/System32/curl.exe"
 TAR_BIN="tar"
