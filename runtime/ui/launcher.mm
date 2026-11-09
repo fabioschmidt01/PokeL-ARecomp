@@ -103,7 +103,7 @@ static const char *build_version(const uint8_t id[8]) {
 static bool build_is_za(const uint8_t id[8]) { return build_version(id) && memcmp(id, BUILD_ID, 8); }
 // The release tag this build is (also names the release files; Makefile / tools/bundle_macos.sh / make_dmg.sh read
 // it): ZA Recomp's v<major>.<minor>.<patch> (Hexveil404/PokeZ-ARecomp releases).
-#define LARECOMP_VERSION "v0.1.13"
+#define LARECOMP_VERSION "v0.1.0"
 extern "C" const char *rt_version(void) { return LARECOMP_VERSION; }  // (runtime/main.c: the log's first line)
 extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }  // (the shader caches' tag)
 
@@ -147,6 +147,7 @@ static pthread_mutex_t g_update_lock = PTHREAD_MUTEX_INITIALIZER;
 #define UPDATE_ASSET "ZA-Recomp-windows.zip"
 
 static void *update_thread(void *) {
+    return NULL;  // Standalone release: external Z-A update checks disabled
     std::string body;
     if (const char *t = getenv("LARECOMP_UPDATE_TAGS")) {  // (test) "beta_2,v1.0.0": these releases, no network
         for (const char *p = t; *p;) {
@@ -432,11 +433,11 @@ static const char *fail_hint(int k, bool pt) {
         "The full reason is in lasrecomp.log next to the program."};
     static const char *const ptb[] = {
         "",
-        "Escolha a pasta com o seu Pokémon Legends Z-A extraído (pastas exefs e romfs), ou com o seu dump (.xci / .nsp) "
+        "Escolha a pasta com o seu Pokémon Legends: Arceus extraído (pastas exefs e romfs), ou com o seu dump (.xci / .nsp) "
         "e o seu prod.keys.",
-        "O jogo base de Pokémon Legends Z-A não está entre esses arquivos. Escolha a pasta com o seu próprio dump.",
+        "O jogo base de Pokémon Legends: Arceus não está entre esses arquivos. Escolha a pasta com o seu próprio dump.",
         "Veja se há uns 12 GB livres e tente de novo.",
-        "O ZA Recomp roda as versões 1.0.0, 2.0.0 e 2.0.2 do jogo (jogo base, ou jogo base + atualização 2.0.0 ou 2.0.2).",
+        "O PokeL-ARecomp roda a versão 1.1.1 do jogo (jogo base + atualização v262144).",
         "Faltam arquivos. Escolha a pasta de novo; se acontecer outra vez, faça o dump do jogo de novo.",
         "Veja se há uns 4 GB livres e tente de novo. Se continuar, avise no GitHub.",
         "Coloque o prod.keys (e o title.keys) do seu próprio Switch na pasta dos arquivos do jogo. Qualquer nome serve "
@@ -2626,20 +2627,20 @@ extern "C" void launcher_run(const char *root) {
                     const char *what = rebuild
                         ? TR("This version of ZA Recomp builds the game's code a little differently. Your game files "
                              "are already here: only the code is compiled again (a few minutes).",
-                             "Esta versão do ZA Recomp compila o código do jogo de um jeito um pouco diferente. Os seus "
+                             "Esta versão do PokeL-ARecomp compila o código do jogo de um jeito um pouco diferente. Os seus "
                              "arquivos do jogo já estão aqui: só o código é compilado de novo (alguns minutos).")
-                        : TR("Choose the folder with your own copy of Pokémon Legends Z-A, either way:\n"
+                        : TR("Choose the folder with your own copy of Pokémon Legends: Arceus, either way:\n"
                              "· the game extracted (exefs and romfs folders, as an emulator or your Switch extracts them): "
                              "no keys needed;\n"
                              "· or your dump: the base game (.xci or .nsp), optionally the update and the DLC (.nsp), and "
                              "the prod.keys from your Switch.\n"
-                             "You can also drop the folder on this window. The game isn't included with ZA Recomp.",
-                             "Escolha a pasta com a sua própria cópia de Pokémon Legends Z-A, de um destes jeitos:\n"
+                             "You can also drop the folder on this window. The game isn't included with PokeL-ARecomp.",
+                             "Escolha a pasta com a sua própria cópia de Pokémon Legends: Arceus, de um destes jeitos:\n"
                              "· o jogo extraído (pastas exefs e romfs, como um emulador ou o seu Switch extraem): sem "
                              "precisar de keys;\n"
                              "· ou o seu dump: o jogo base (.xci ou .nsp), se quiser a atualização e a DLC (.nsp), e o "
                              "prod.keys do seu Switch.\n"
-                             "Também dá para arrastar a pasta para esta janela. O jogo não vem com o ZA Recomp.");
+                             "Também dá para arrastar a pasta para esta janela. O jogo não vem com o PokeL-ARecomp.");
                     float ty = 196 + text(dl, F_BODY, 16, x, 196, C_SOFT, what, w).y + 22;
                     if (!rebuild) {
                         panel(dl, x, ty, w, 64, C_PANEL);
@@ -2680,7 +2681,7 @@ extern "C" void launcher_run(const char *root) {
                                                  : TR("Set up the game files to play", "Prepare os arquivos do jogo para jogar")};
                 } else {
                     // ---- ready
-                    page_title(dl, x, 104, "POKÉMON LEGENDS: Z-A", TR("Ready to play", "Pronto para jogar"));
+                    page_title(dl, x, 104, "POKÉMON LEGENDS: ARCEUS", TR("Ready to play", "Pronto para jogar"));
                     float ty = 196 + text(dl, F_BODY, 17, x, 196, C_SOFT, TR("Your game files are set up and the game's code "
                                                                               "is compiled for this PC.", "Os seus arquivos do "
                                                                               "jogo estão configurados e o código já foi "
@@ -2892,12 +2893,12 @@ extern "C" void launcher_run(const char *root) {
                     reveal_folder("save");
                 }
                 ly += 64;
-                const char *from = TR("Where from: a JKSV backup (modded Switch: JKSV/Pokémon Legends Z-A/...), a save from "
-                                      "an emulator or from another copy of ZA Recomp. Choose the folder holding the file "
+                const char *from = TR("Where from: a JKSV backup (modded Switch: JKSV/Pokémon Legends Arceus/...), a save from "
+                                      "an emulator or from another copy of PokeL-ARecomp. Choose the folder holding the file "
                                       "\"main\", or drop it (or a .zip) on this window. Your current save becomes a backup "
                                       "first, so nothing is lost. The save must be from the same game version or older.",
-                                      "De onde: um backup do JKSV (Switch desbloqueado: JKSV/Pokémon Legends Z-A/...), um "
-                                      "save de emulador ou de outra cópia do ZA Recomp. Escolha a pasta com o arquivo "
+                                      "De onde: um backup do JKSV (Switch desbloqueado: JKSV/Pokémon Legends Arceus/...), um "
+                                      "save de emulador ou de outra cópia do PokeL-ARecomp. Escolha a pasta com o arquivo "
                                       "\"main\", ou arraste ela (ou um .zip) para esta janela. O save atual vira um backup "
                                       "antes, então nada se perde. O save precisa ser da mesma versão do jogo ou mais antiga.");
                 float fh = text_size(F_BODY, 14, from, cw - 92).y;

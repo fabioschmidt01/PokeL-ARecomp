@@ -284,6 +284,12 @@ static void pick_device(void) {
                 g_vk.props.deviceName, is_arc ? ", Intel Arc Architecture" : "",
                 t == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "Dedicated VRAM pool unlocked (12 GB+ capable)" : "Shared system memory");
         }
+        if (g_vk.props.vendorID == 0x10DE) {
+            LOG("[vk] [NVIDIA Hardware] %s (Vendor 0x10DE, Dedicated VRAM: %.1f GB, NVML metrics enabled)\n",
+                g_vk.props.deviceName, (double)vram / (1u << 30));
+        }
+        extern void perfmon_set_gpu(const char *name, float vram_total_mb);
+        perfmon_set_gpu(g_vk.props.deviceName, (float)((double)vram / (1u << 20)));
     }
     settings_resolve_defaults(g_vk.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU);
     {   // this PC's recommended video settings (settings.c): applied at the first start, offered to older settings files
@@ -1958,6 +1964,11 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
     if (hitch_ms < 0) hitch_ms = getenv("LARECOMP_LOG_HITCH_MS") ? atof(getenv("LARECOMP_LOG_HITCH_MS")) : 0;
     if (hitch_ms > 0 && prev_present > 0 && (now - prev_present) * 1000 > hitch_ms)
         LOG("[hitch] t=%.2f frame %llu gap %.0f ms\n", now, (unsigned long long)frame, (now - prev_present) * 1000);
+    extern void perfmon_frame(uint64_t interval_ns);
+    static uint64_t prev_present_ns;
+    uint64_t now_ns = SDL_GetTicksNS();
+    if (prev_present_ns > 0) perfmon_frame(now_ns - prev_present_ns);
+    prev_present_ns = now_ns;
     prev_present = now;
     pp_mark(PP_REST);  // (the fps line itself is not counted)
     if (now - last_fps_time >= fps_iv) {
@@ -2136,7 +2147,7 @@ void ui_window_init(void) {
                                             ENV("LARECOMP_HOST_INPUT") || ENV("LARECOMP_BIND_TEST"));
         if (scripted) SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
     }
-    window = SDL_CreateWindow("ZA Recomp", win_w, win_h, wflags);
+    window = SDL_CreateWindow("PokeL-ARecomp - Pokémon Legends: Arceus", win_w, win_h, wflags);
     if (!window) FATAL("SDL_CreateWindow: %s\n", SDL_GetError());
     rt_window_icon(window);
     // the Fullscreen setting applies from the start screen on (not only once the game runs); test windows stay windows

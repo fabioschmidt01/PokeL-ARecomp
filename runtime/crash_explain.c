@@ -60,7 +60,7 @@ static bool in_gpu_driver(uint64_t pc) {
 void rt_crash_explain(char *out, size_t n, const char *log_path) {
     static const char *const report = "Please report it as a GitHub issue and attach the log file below. "
                                       "Your progress up to your last save or autosave is safe.";
-    const char *app = g_game_is_la ? "LAS Recomp" : "ZA Recomp";
+    const char *app = g_game_is_la ? "LAS Recomp" : "PokeL-ARecomp";
     char head[160], what[400];
     // (the file count is Link's Awakening's: Pokémon Z-A's RomFS has its own, and every crash read as missing files)
     if (g_game_is_la && rt_romfs_files >= 0 && rt_romfs_files < ROMFS_FILES) {

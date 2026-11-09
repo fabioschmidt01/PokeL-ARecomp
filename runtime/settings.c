@@ -188,10 +188,10 @@ static int gpu_profile(unsigned vendor, bool integrated, uint64_t vram, const ch
     int m;
     if (vendor == 0x10DE) {  // NVIDIA
         if ((m = model_after(name, "RTX "))) {
-            int gen = m / 100, tier = m % 100;  // 3060 -> 30, 60
+            int gen = m / 100, tier = m % 100;  // 2060 -> 20, 60; 3060 -> 30, 60
             if (gen >= 30 && tier >= 70 && gb >= 10) return VPROF_ULTRA;  // (RTX 3080 / 4070 / 5070 and up)
-            if (gen >= 30 && tier >= 60 && gb >= 8) return VPROF_HIGH;    // (an RTX 4060 Ti: 60 fps at 1x, not 1.5x)
-            return VPROF_MEDIUM;  // (RTX 20, xx50, 6 GB cards)
+            if (gen >= 20 && tier >= 60 && gb >= 6) return VPROF_HIGH;   // (RTX 2060, 2070, 3060, 4060: 60 fps at 1x)
+            return VPROF_MEDIUM;  // (RTX 3050, xx50, 4 GB cards)
         }
         if (model_after(name, "GTX ")) return VPROF_MEDIUM;  // (GTX 10 / 16)
     } else if (vendor == 0x1002) {  // AMD

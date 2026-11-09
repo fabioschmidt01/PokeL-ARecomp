@@ -67,6 +67,35 @@ SERVICE("friend:u", friend_u) { friend_root(s, req, resp); }
 SERVICE("friend:a", friend_a) { friend_root(s, req, resp); }
 SERVICE("friend:v", friend_v) { friend_root(s, req, resp); }
 
+// ------------------------------------------------------------------ prepo:u / prepo:a / prepo:m / prepo:s
+// Play report telemetry services (nn::prepo). Pokémon Legends Arceus periodically submits play reports
+// in Jubilife Village and Hisui areas. Stubbed safely so reports succeed without attempting Nintendo telemetry,
+// preventing null-dereference crashes on background report threads.
+static void prepo_service(Service *s, IpcReq *req, IpcResp *resp) {
+    (void)s;
+    resp->result = 0;
+    switch (req->cmd) {
+    case 10103:  // GetTransmissionStatus
+        OUT(uint32_t, 0) = 0;
+        resp_size(resp, 4);
+        break;
+    case 10300: case 20300:  // IsSystemUpdateRequired
+        OUT(uint8_t, 0) = 0;
+        resp_size(resp, 1);
+        break;
+    case 10100: case 10101: case 10102: case 10104: case 10105:
+    case 10200: case 20100: case 20101: case 20200:
+    default:
+        LOG("[prepo] %s cmd %u -> ok (local)\n", s->name, req->cmd);
+        resp_size(resp, 0x10);
+        break;
+    }
+}
+SERVICE("prepo:u", prepo_u) { prepo_service(s, req, resp); }
+SERVICE("prepo:a", prepo_a) { prepo_service(s, req, resp); }
+SERVICE("prepo:m", prepo_m) { prepo_service(s, req, resp); }
+SERVICE("prepo:s", prepo_s) { prepo_service(s, req, resp); }
+
 // ------------------------------------------------------------------ csrng
 // GenerateRandomBytes (cmd 0) into the output buffer. Z-A asks it for the seeds of its rolls, hundreds of times a
 // session; the logging stub left the buffer as it was, so every roll came out the same - each ball caught (#61).

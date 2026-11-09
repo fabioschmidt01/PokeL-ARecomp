@@ -32,6 +32,7 @@ extern "C" int vk_hdr_state(void);  // device.c: 0 the display isn't in HDR mode
 extern "C" {
 #include "../hle.h"
 #include "../settings.h"
+#include "../perfmon.h"
 extern int g_game_is_la;  // runtime/kernel.c: Link's Awakening (its own tabs: randomizer, warp, cheats...)
 #include "menu.h"
 void input_reset(void);
@@ -857,9 +858,9 @@ static void tab_quit(float scale, bool in_game) {
         ask = 0;
     const char *lost = in_game ? TR("\n\nProgress since your last save is lost.", "\n\nO progresso desde o último save se perde.") : "";
     char d1[300], d2[300];
-    snprintf(d1, sizeof d1, "%s%s", TR("Leaves the game and goes back to the ZA Recomp start screen.",
-                                       "Sai do jogo e volta para a tela inicial do ZA Recomp."), lost);
-    snprintf(d2, sizeof d2, "%s%s", TR("Closes ZA Recomp.", "Fecha o ZA Recomp."), lost);
+    snprintf(d1, sizeof d1, "%s%s", TR("Leaves the game and goes back to the PokeL-ARecomp start screen.",
+                                       "Sai do jogo e volta para a tela inicial do PokeL-ARecomp."), lost);
+    snprintf(d2, sizeof d2, "%s%s", TR("Closes PokeL-ARecomp.", "Fecha o PokeL-ARecomp."), lost);
     opt_begin("##quit", scale);
     opt_section(TR("Quit", "Sair"));
     if (!ask) {
@@ -1242,10 +1243,137 @@ void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, v
     g_font = f0, g_font_big = f1;
 }
 
+static void perfmon_draw(const ImVec2 &display, float scale) {
+    int mode = perfmon_get_mode();
+    if (!mode && !g_settings.show_fps) return;
+    PerfStats s;
+    perfmon_snapshot(&s);
+
+    if (mode == 1 || (mode == 0 && g_settings.show_fps)) {
+        // Mode 1: Compact FPS pill in the top-right corner
+        char buf[64];
+        float cur_fps = s.fps > 0 ? s.fps : ImGui::GetIO().Framerate;
+        float cur_ms = s.frame_ms_avg > 0 ? s.frame_ms_avg : (cur_fps > 0 ? 1000.0f / cur_fps : 16.6f);
+        snprintf(buf, sizeof buf, "%.1f FPS (%.1f ms)", cur_fps, cur_ms);
+        ImVec2 sz = ImGui::CalcTextSize(buf);
+        float pad = 8.0f * scale;
+        float x = display.x - sz.x - pad * 2 - 16.0f * scale;
+        float y = 16.0f * scale;
+        ImDrawList *dl = ImGui::GetForegroundDrawList();
+        dl->AddRectFilled(ImVec2(x, y), ImVec2(x + sz.x + pad * 2, y + sz.y + pad * 2), IM_COL32(10, 15, 24, 210), 6.0f * scale);
+        dl->AddRect(ImVec2(x, y), ImVec2(x + sz.x + pad * 2, y + sz.y + pad * 2), IM_COL32(230, 180, 50, 180), 6.0f * scale, 0, 1.5f);
+        dl->AddText(ImVec2(x + pad, y + pad), IM_COL32(255, 255, 255, 240), buf);
+        return;
+    }
+
+    if (mode == 2) {
+        // Mode 2: Full RivaTuner HUD
+        float panel_w = 360.0f * scale;
+        ImGui::SetNextWindowPos(ImVec2(display.x - panel_w - 16.0f * scale, 16.0f * scale), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(panel_w, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.88f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.04f, 0.06f, 0.10f, 0.90f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.90f, 0.70f, 0.20f, 0.60f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * scale, 10.0f * scale));
+
+        ImGui::Begin("##perfhud", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                        ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
+
+        // Header: GPU
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.9f, 1.0f), "GPU");
+        ImGui::SameLine(100.0f * scale);
+        if (s.gpu_pct >= 0) ImGui::Text("%.0f%%", s.gpu_pct); else ImGui::TextDisabled("N/A");
+        if (s.gpu_temp_c > 0) {
+            ImGui::SameLine(180.0f * scale);
+            ImGui::Text("%.0f°C", s.gpu_temp_c);
+        }
+        if (s.gpu_power_w > 0) {
+            ImGui::SameLine(250.0f * scale);
+            ImGui::Text("%.0fW", s.gpu_power_w);
+        }
+
+        // VRAM
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.9f, 1.0f), "VRAM");
+        ImGui::SameLine(100.0f * scale);
+        if (s.vram_used_mb > 0 && s.vram_total_mb > 0) {
+            ImGui::Text("%.1f / %.1f GB", s.vram_used_mb / 1024.0f, s.vram_total_mb / 1024.0f);
+        } else if (s.vram_total_mb > 0) {
+            ImGui::Text("%.1f GB", s.vram_total_mb / 1024.0f);
+        } else {
+            ImGui::TextDisabled("N/A");
+        }
+        if (s.gpu_clock_mhz > 0) {
+            ImGui::SameLine(250.0f * scale);
+            ImGui::Text("%.0f MHz", s.gpu_clock_mhz);
+        }
+
+        // CPU
+        ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.3f, 1.0f), "CPU");
+        ImGui::SameLine(100.0f * scale);
+        if (s.cpu_total_pct >= 0) ImGui::Text("%.0f%%", s.cpu_total_pct); else ImGui::TextDisabled("N/A");
+        if (s.cpu_game_pct >= 0) {
+            ImGui::SameLine(180.0f * scale);
+            ImGui::Text("Game: %.0f%%", s.cpu_game_pct);
+        }
+        if (s.cpu_temp_c > 0) {
+            ImGui::SameLine(270.0f * scale);
+            ImGui::Text("%.0f°C", s.cpu_temp_c);
+        }
+
+        // RAM
+        ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.2f, 1.0f), "RAM");
+        ImGui::SameLine(100.0f * scale);
+        if (s.ram_used_mb > 0 && s.ram_total_mb > 0) {
+            ImGui::Text("%.1f / %.1f GB", s.ram_used_mb / 1024.0f, s.ram_total_mb / 1024.0f);
+        } else {
+            ImGui::TextDisabled("N/A");
+        }
+        if (s.ram_game_mb > 0) {
+            ImGui::SameLine(250.0f * scale);
+            ImGui::Text("Game: %.1f GB", s.ram_game_mb / 1024.0f);
+        }
+
+        ImGui::Separator();
+
+        // FPS & Lows
+        float cur_fps = s.fps > 0 ? s.fps : ImGui::GetIO().Framerate;
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.4f, 1.0f), "FPS: %.1f", cur_fps);
+        if (s.low1_fps > 0) {
+            ImGui::SameLine(130.0f * scale);
+            ImGui::Text("1%%: %.0f", s.low1_fps);
+        }
+        if (s.low01_fps > 0) {
+            ImGui::SameLine(220.0f * scale);
+            ImGui::Text("0.1%%: %.0f", s.low01_fps);
+        }
+
+        // Frametimes
+        float cur_ms = s.frame_ms_avg > 0 ? s.frame_ms_avg : (cur_fps > 0 ? 1000.0f / cur_fps : 16.6f);
+        ImGui::Text("Frametime: %.1f ms", cur_ms);
+        if (s.frame_ms_max > 0) {
+            ImGui::SameLine(220.0f * scale);
+            ImGui::Text("Max: %.1f ms", s.frame_ms_max);
+        }
+
+        // Frametime Graph (120 frames history)
+        float max_ft = s.frame_ms_max > 40.0f ? s.frame_ms_max : 40.0f;
+        ImGui::PlotLines("##ftgraph", s.frame_ms, PERF_HISTORY, 0, NULL, 0.0f, max_ft, ImVec2(panel_w - 24.0f * scale, 42.0f * scale));
+
+        // Hardware names footer
+        if (s.gpu_name[0]) ImGui::TextDisabled("%.36s", s.gpu_name);
+        if (s.cpu_name[0]) ImGui::TextDisabled("%.36s", s.cpu_name);
+
+        ImGui::End();
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(2);
+    }
+}
+
 // Whether menu_render draws anything: the menu, the keyboard, an overlay (FPS, inventory, tracker, chaos, race, a
 // pickup card).
 static bool render_needed(bool open, bool kbd, bool inv, bool trk, bool trkd, bool chaos, bool race, bool flyin) {
-    return open || kbd || g_settings.show_fps || inv || trk || trkd || chaos || race || flyin;
+    return open || kbd || g_settings.show_fps || perfmon_get_mode() || inv || trk || trkd || chaos || race || flyin;
 }
 
 #ifdef __APPLE__
@@ -1289,7 +1417,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         fps_note(now, io.DeltaTime);
         char rk[64];
         // (only the FPS counter and the run timer; input only reaches ImGui while the menu or the name entry is up)
-        if (!open && !kbd && !inv && !trk && !trkd && !chaos && !flyin && race_overlay_key(rk, sizeof rk)) {
+        if (!open && !kbd && !inv && !trk && !trkd && !chaos && !flyin && !perfmon_get_mode() && race_overlay_key(rk, sizeof rk)) {
             pthread_mutex_lock(&q_lock);
             bool events = !q_events.empty();
             pthread_mutex_unlock(&q_lock);
@@ -1346,14 +1474,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
 #endif
     ImGui::NewFrame();
 
-    if (g_settings.show_fps) {
-        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 16 * scale, 16 * scale), 0, ImVec2(1, 0));
-        ImGui::SetNextWindowBgAlpha(0.5f);
-        ImGui::Begin("##fps", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                                        ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
-        ImGui::Text("%.0f fps", g_ov_cache ? g_fps_shown : io.Framerate);
-        ImGui::End();
-    }
+    perfmon_draw(io.DisplaySize, scale);
 
     if (notice) {  // menu_notice: a line at the bottom for a few seconds
         char text[sizeof g_notice_text];
