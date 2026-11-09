@@ -25,7 +25,7 @@ esac
 
 DL=build/zig-dl
 mkdir -p "$DL"
-[ -f "$DL/$NAME.$EXT" ] || curl -fL --proto '=https' -o "$DL/$NAME.$EXT" "https://ziglang.org/download/$VER/$NAME.$EXT"
+[ -f "$DL/$NAME.$EXT" ] || curl -fL --retry 5 --retry-delay 2 --retry-connrefused --proto '=https' -o "$DL/$NAME.$EXT" "https://ziglang.org/download/$VER/$NAME.$EXT"
 GOT=$( (shasum -a 256 2>/dev/null || sha256sum) < "$DL/$NAME.$EXT" | cut -d' ' -f1)
 [ "$GOT" = "$SHA" ] || { echo "$NAME.$EXT: sha256 $GOT, expected $SHA"; exit 1; }
 rm -rf "$DL/$NAME" build/zig

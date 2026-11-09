@@ -15,14 +15,14 @@ B=build/za-dist D="build/dist-za/ZA Recomp"
 ZIP_ZIG=build/zig-dl/zig-x86_64-windows-0.17.0.zip
 if [ ! -x build/zig/zig.exe ]; then
     mkdir -p build/zig-dl
-    [ -f $ZIP_ZIG ] || /c/Windows/System32/curl.exe -fsSL -o $ZIP_ZIG https://ziglang.org/download/0.17.0/zig-x86_64-windows-0.17.0.zip
+    [ -f $ZIP_ZIG ] || /c/Windows/System32/curl.exe -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o $ZIP_ZIG https://ziglang.org/download/0.17.0/zig-x86_64-windows-0.17.0.zip
     bash tools/fetch_zig.sh
 fi
 # 1b. Intel XeSS SDK (Intel Arc AI upscaling runtime)
 if [ ! -f third_party/xess/bin/libxess.dll ]; then
     mkdir -p build/xess-dl
     ZIP_XESS=build/xess-dl/XeSS_SDK_3.0.2.zip
-    [ -f "$ZIP_XESS" ] || /c/Windows/System32/curl.exe -fsSL -o "$ZIP_XESS" https://github.com/intel/xess/releases/download/v3.0.2/XeSS_SDK_3.0.2.zip
+    [ -f "$ZIP_XESS" ] || /c/Windows/System32/curl.exe -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o "$ZIP_XESS" https://github.com/intel/xess/releases/download/v3.0.2/XeSS_SDK_3.0.2.zip
     /c/Windows/System32/tar.exe -xf "$ZIP_XESS" -C third_party/xess
 fi
 
@@ -54,7 +54,7 @@ USERPROFILE="$(cygpath -w ~)" build/prompts-venv/Scripts/python.exe -m PyInstall
 build/helper/zaprompts/zaprompts.exe --xbox-attack-layout-version  # refuse a ZIP with an older/incomplete helper
 # 3. the LGPL FFmpeg, the exe (release: no console, log in lasrecomp.log) and zig with its runtime built ahead of time
 SRC_FF=build/deps-win/src/ffmpeg-9.0.2.tar.xz
-[ -f $SRC_FF ] || { mkdir -p build/deps-win/src; /c/Windows/System32/curl.exe -fsSL -o $SRC_FF https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz; }
+[ -f $SRC_FF ] || { mkdir -p build/deps-win/src; /c/Windows/System32/curl.exe -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o $SRC_FF https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz; }
 bash tools/build_deps_windows.sh
 make -j"$(nproc)" B=$B DEPS="$PWD/build/deps-win" RELEASE=1 GENARCH="$GENARCH" GENOPT="$GENOPT" $B/lasrecomp.exe
 ! nm $B/lasrecomp.exe | grep -q ' f_70'  # (no game code inside)
