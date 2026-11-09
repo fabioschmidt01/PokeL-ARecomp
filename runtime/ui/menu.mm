@@ -1392,16 +1392,18 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         ImGui::PushFont(g_menu_font);
         // header as on the start screen's Settings: the title, and a close X in the corner (B / Esc too). ("Title
         // screen" - rt_request_reboot(RT_REBOOT_TITLE) - is to find a new home; user 2026-10-11.)
-        {   // ZA Recomp's mark (a hexagon with a Z, as on the start screen), then the title
+        {   // PLA Recomp's mark (the golden Arceus ring with an A), then the title
             float u = ImGui::GetFontSize() * 1.15f / 30;
             ImVec2 o = ImGui::GetCursorScreenPos();
             o.y += ImGui::GetFontSize() * 0.35f;
             auto Q = [&](float x, float y) { return ImVec2(o.x + x * u, o.y + y * u); };
             ImDrawList *dl = ImGui::GetWindowDrawList();
-            ImVec2 hex[] = {Q(15, 2), Q(26, 8.5f), Q(26, 21.5f), Q(15, 28), Q(4, 21.5f), Q(4, 8.5f)};
-            dl->AddPolyline(hex, 6, IM_COL32(242, 181, 68, 255), ImDrawFlags_Closed, 2 * u);
-            ImVec2 z[] = {Q(10.5f, 10.5f), Q(19.5f, 10.5f), Q(10.5f, 19.5f), Q(19.5f, 19.5f)};
-            dl->AddPolyline(z, 4, IM_COL32(238, 243, 246, 255), 0, 2.4f * u);
+            dl->AddCircle(Q(15, 15), 13 * u, IM_COL32(242, 181, 68, 255), 32, 2 * u);
+            dl->AddLine(Q(15, 2), Q(15, 28), IM_COL32(242, 181, 68, 255), 1.5f * u);
+            dl->AddLine(Q(2, 15), Q(28, 15), IM_COL32(242, 181, 68, 255), 1.5f * u);
+            ImVec2 a_pts[] = {Q(9.5f, 22), Q(15, 8), Q(20.5f, 22)};
+            dl->AddPolyline(a_pts, 3, IM_COL32(238, 243, 246, 255), 0, 2.2f * u);
+            dl->AddLine(Q(11.5f, 17), Q(18.5f, 17), IM_COL32(238, 243, 246, 255), 2.0f * u);
             ImGui::Dummy(ImVec2(32 * u, 1));
             ImGui::SameLine();
         }

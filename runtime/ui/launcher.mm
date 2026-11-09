@@ -1522,10 +1522,12 @@ static void icon(ImDrawList *dl, int k, float cx, float cy, float size, ImU32 co
 static void logo(ImDrawList *dl, float x, float y, float size) {
     float u = size / 30;
     auto Q = [&](float a, float b) { return P(x + a * u, y + b * u); };
-    ImVec2 hex[] = {Q(15, 2), Q(26, 8.5f), Q(26, 21.5f), Q(15, 28), Q(4, 21.5f), Q(4, 8.5f)};
-    dl->AddPolyline(hex, 6, C_GOLD, ImDrawFlags_Closed, 2 * u * g_s);
-    ImVec2 z[] = {Q(10.5f, 10.5f), Q(19.5f, 10.5f), Q(10.5f, 19.5f), Q(19.5f, 19.5f)};
-    dl->AddPolyline(z, 4, C_TEXT, 0, 2.4f * u * g_s);
+    dl->AddCircle(Q(15, 15), 13 * u, C_GOLD, 32, 2 * u * g_s);
+    dl->AddLine(Q(15, 2), Q(15, 28), C_GOLD, 1.5f * u * g_s);
+    dl->AddLine(Q(2, 15), Q(28, 15), C_GOLD, 1.5f * u * g_s);
+    ImVec2 a_pts[] = {Q(9.5f, 22), Q(15, 8), Q(20.5f, 22)};
+    dl->AddPolyline(a_pts, 3, C_TEXT, 0, 2.2f * u * g_s);
+    dl->AddLine(Q(11.5f, 17), Q(18.5f, 17), C_TEXT, 2.0f * u * g_s);
 }
 
 // A button. kind: primary (gold), secondary (glass), ghost (text), tab. w <= 0: as wide as its text. True when pressed.
@@ -2490,7 +2492,7 @@ extern "C" void launcher_run(const char *root) {
             dl->AddRectFilled(P(0, 0), P(W_, 64), IM_COL32(4, 10, 19, 150));
             dl->AddLine(P(0, 64), P(W_, 64), IM_COL32(255, 255, 255, 18), 1.2f * g_s);
             logo(dl, 26, 17, 30);
-            float lx = 64 + text(dl, F_H2, 20, 64, 32 - text_size(F_H2, 20, "ZA RECOMP").y / 2, C_TEXT, "ZA RECOMP").x;
+            float lx = 64 + text(dl, F_H2, 20, 64, 32 - text_size(F_H2, 20, "PLA RECOMP").y / 2, C_TEXT, "PLA RECOMP").x;
             text(dl, F_SMALL, 13, lx + 8, 32 - text_size(F_SMALL, 13, "v").y / 2 + 1, C_MUTED, LARECOMP_VERSION);
             const char *tab_names[N_TABS] = {TR("Play", "Jogar"), TR("Mods", "Mods"), TR("Saves", "Saves"),
                                              TR("Settings", "Configurações"), TR("About", "Sobre")};
@@ -2985,16 +2987,16 @@ extern "C" void launcher_run(const char *root) {
             // ================= About
             if (g_tab == TAB_ABOUT) {
                 float x = 72, w = fminf(760, W_ - 144), y = 100;
-                y += text(dl, F_H1, 40, x, y, C_TEXT, "ZA Recomp").y + 4;
+                y += text(dl, F_H1, 40, x, y, C_TEXT, "PLA Recomp").y + 4;
                 y += text(dl, F_LABEL, 16, x, y, C_GOLD_HI,
                           (std::string(TR("Version ", "Versão ")) + tag_label(LARECOMP_VERSION, false)).c_str()).y + 18;
-                const char *about = TR("A PC port of Pokémon Legends: Z-A made by static recompilation: the game's code is "
+                const char *about = TR("A PC port of Pokémon Legends: Arceus made by static recompilation: the game's code is "
                                        "turned into native code for your PC, and the Switch's system and graphics are "
                                        "rebuilt around it. Built on LAS Recomp by Peiikai and its contributors, with "
                                        "Ryujinx as a reference.\n\nNo part of the game is included: you bring your own "
                                        "dump and keys. Pokémon and Nintendo Switch are trademarks of their owners; this "
                                        "project isn't affiliated with them.",
-                                       "Um port para PC de Pokémon Legends: Z-A feito por recompilação estática: o código "
+                                       "Um port para PC de Pokémon Legends: Arceus feito por recompilação estática: o código "
                                        "do jogo vira código nativo para o seu PC, e o sistema e os gráficos do Switch são "
                                        "refeitos em volta dele. Feito sobre o LAS Recomp, do Peiikai e colaboradores, com "
                                        "o Ryujinx como referência.\n\nNenhuma parte do jogo vem junto: você usa o seu "
@@ -3002,10 +3004,10 @@ extern "C" void launcher_run(const char *root) {
                                        "este projeto não tem ligação com eles.");
                 y += text(dl, F_BODY, 16, x, y, C_SOFT, about, w).y + 26;
                 if (button("##gh", TR("Project page (GitHub)", "Página do projeto (GitHub)"), x, y, 0, 48, BTN_SECONDARY))
-                    SDL_OpenURL("https://github.com/Hexveil404/PokeZ-ARecomp");
+                    SDL_OpenURL("https://github.com/fabioschmidt01/PokeL-ARecomp-privado-teste");
                 float bx2 = x + ImGui::GetItemRectSize().x / g_s + 12;
                 if (button("##issues", TR("Report a problem", "Relatar um problema"), bx2, y, 0, 48, BTN_SECONDARY))
-                    SDL_OpenURL("https://github.com/Hexveil404/PokeZ-ARecomp/issues");
+                    SDL_OpenURL("https://github.com/fabioschmidt01/PokeL-ARecomp-privado-teste/issues");
                 bx2 += ImGui::GetItemRectSize().x / g_s + 12;
                 if (button("##logs", TR("Open the logs folder", "Abrir a pasta de logs"), bx2, y, 0, 48, BTN_SECONDARY, true, IC_FOLDER))
                     reveal_folder("logs");

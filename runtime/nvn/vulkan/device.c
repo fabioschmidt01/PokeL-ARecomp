@@ -278,6 +278,12 @@ static void pick_device(void) {
             t == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "dedicated" : t == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "integrated" : "other",
             (double)vram / (1u << 30), dp.driverName, dp.driverInfo, VK_API_VERSION_MAJOR(g_vk.props.apiVersion),
             VK_API_VERSION_MINOR(g_vk.props.apiVersion), VK_API_VERSION_PATCH(g_vk.props.apiVersion));
+        if (g_vk.props.vendorID == 0x8086) {
+            bool is_arc = strstr(g_vk.props.deviceName, "Arc") != NULL;
+            LOG("[vk] [Intel Hardware] %s (Vendor 0x8086%s, %s)\n",
+                g_vk.props.deviceName, is_arc ? ", Intel Arc Architecture" : "",
+                t == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "Dedicated VRAM pool unlocked (12 GB+ capable)" : "Shared system memory");
+        }
     }
     settings_resolve_defaults(g_vk.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU);
     {   // this PC's recommended video settings (settings.c): applied at the first start, offered to older settings files
