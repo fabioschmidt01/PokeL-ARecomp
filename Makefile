@@ -2,6 +2,7 @@
 # macOS: Homebrew clang/SDL3/FFmpeg, Metal renderer.
 # Windows: MSYS2 UCRT64 shell (see docs/BUILD-windows.md), clang + Vulkan renderer.
 # Linux: clang + Vulkan renderer, x86-64 or aarch64 (see docs/linux.md).
+SHELL := sh
 UNAME := $(shell uname -s)
 comma := ,
 ifneq ($(filter MINGW% MSYS% CYGWIN% Windows_NT,$(UNAME) $(OS)),)
@@ -159,19 +160,18 @@ $(B)/rt/%.o: runtime/%.c $(RT_HDRS)
 # SMAA (third_party/smaa, MIT): the reference shader as a C string for runtime/nvn/smaa_data.c (both backends build
 # their passes from it); the non-ASCII bytes in its comments become '?', and its CRLF line ends plain LF (a CR left in
 # the string literals ends them early on macOS clang)
-$(B)/inc/smaa_hlsl.inc: third_party/smaa/SMAA.hlsl
+$(B)/inc/smaa_hlsl.inc: third_party/smaa/SMAA.hlsl tools/file_to_c_string.py
 	@mkdir -p $(dir $@)
-	LC_ALL=C tr -d '\r' < $< | LC_ALL=C tr '\200-\377' '?' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' > $@
+	python tools/file_to_c_string.py smaa $< $@
 $(B)/rt/nvn/smaa_data.o: $(B)/inc/smaa_hlsl.inc
 $(B)/rt/nvn/smaa_data.o: RTFLAGS += -I$(B)/inc -Ithird_party/smaa/Textures
 
 # AMD FSR 2 (third_party/fsr2, MIT): its API and Vulkan backend, and its GLSL shaders as {name, text} pairs for
 # runtime/nvn/vulkan/fsr2_shaders.cpp (compiled at run time with shaderc: no precompiled permutations)
 FSR2_SHADERS := $(wildcard third_party/fsr2/shaders/*.h third_party/fsr2/shaders/*.glsl)
-$(B)/inc/fsr2_shaders.inc: $(FSR2_SHADERS)
+$(B)/inc/fsr2_shaders.inc: $(FSR2_SHADERS) tools/file_to_c_string.py
 	@mkdir -p $(dir $@)
-	for f in $(FSR2_SHADERS); do echo "{\"$$(basename $$f)\","; LC_ALL=C tr -d '\r' < $$f | LC_ALL=C tr '\200-\377' '?' | \
-	  sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/'; echo "},"; done > $@
+	python tools/file_to_c_string.py fsr2 $@ $(FSR2_SHADERS)
 $(B)/rt/nvn/vulkan/fsr2_shaders.o: $(B)/inc/fsr2_shaders.inc
 $(B)/rt/nvn/vulkan/fsr2_shaders.o: CXXFLAGS += -I$(B)/inc
 FSR2_OBJ := $(B)/fsr2/ffx_fsr2.o $(B)/fsr2/ffx_assert.o $(B)/fsr2/vk/ffx_fsr2_vk.o
@@ -186,9 +186,9 @@ $(B)/fsr2/%.o: third_party/fsr2/%.cpp
 
 # The shader preparation's variant list (runtime/nvn/shader_prep.h: no shader code, hashes and pipeline state only)
 # as a C string for runtime/nvn/shader_prep.c
-$(B)/inc/shader_variants.inc: runtime/nvn/shader_variants.txt
+$(B)/inc/shader_variants.inc: runtime/nvn/shader_variants.txt tools/file_to_c_string.py
 	@mkdir -p $(dir $@)
-	(LC_ALL=C tr -d '\r' < $< | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/'; echo '""') > $@
+	python tools/file_to_c_string.py variants $< $@
 $(B)/rt/nvn/shader_prep.o: $(B)/inc/shader_variants.inc
 $(B)/rt/nvn/shader_prep.o: RTFLAGS += -I$(B)/inc
 # the shader translator's id: part of the shader caches' tag (shader_cache_tag), so a changed translator rebuilds them
