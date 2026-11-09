@@ -266,7 +266,8 @@ static void pick_device(void) {
     if (g_vk.qfam == UINT32_MAX) FATAL("no graphics+present queue\n");
     {   // (with the [system] line, runtime/main.c: kind, video memory, driver - what a report needs)
         VkPhysicalDeviceDriverProperties dp = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
-        VkPhysicalDeviceProperties2 p2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &dp};
+        VkPhysicalDeviceIDProperties id = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES, .pNext = &dp};
+        VkPhysicalDeviceProperties2 p2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &id};
         vkGetPhysicalDeviceProperties2(g_vk.phys, &p2);
         VkPhysicalDeviceMemoryProperties mp;
         vkGetPhysicalDeviceMemoryProperties(g_vk.phys, &mp);
@@ -288,8 +289,8 @@ static void pick_device(void) {
             LOG("[vk] [NVIDIA Hardware] %s (Vendor 0x10DE, Dedicated VRAM: %.1f GB, NVML metrics enabled)\n",
                 g_vk.props.deviceName, (double)vram / (1u << 30));
         }
-        extern void perfmon_set_gpu(const char *name, float vram_total_mb);
-        perfmon_set_gpu(g_vk.props.deviceName, (float)((double)vram / (1u << 20)));
+        extern void perfmon_set_gpu(const char *name, const uint8_t *luid, float vram_total_mb);
+        perfmon_set_gpu(g_vk.props.deviceName, id.deviceLUIDValid ? id.deviceLUID : NULL, (float)((double)vram / (1u << 20)));
     }
     settings_resolve_defaults(g_vk.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU);
     {   // this PC's recommended video settings (settings.c): applied at the first start, offered to older settings files
@@ -533,12 +534,17 @@ void vk_log_memory(const char *why) {
     vmaGetMemoryProperties(g_vk.vma, &mp);
     VmaBudget b[VK_MAX_MEMORY_HEAPS];
     vmaGetHeapBudgets(g_vk.vma, b);
-    for (uint32_t i = 0; i < mp->memoryHeapCount; i++)
+    uint64_t used = 0;
+    for (uint32_t i = 0; i < mp->memoryHeapCount; i++) {
+        if (mp->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) used += b[i].usage;
         LOG("[vk] memory (%s) heap %u %s: %llu MB, budget %llu MB, in use %llu MB, ours %llu MB in %u allocations\n", why, i,
             mp->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT ? "device-local" : "system",
             (unsigned long long)(mp->memoryHeaps[i].size >> 20), (unsigned long long)(b[i].budget >> 20),
             (unsigned long long)(b[i].usage >> 20), (unsigned long long)(b[i].statistics.allocationBytes >> 20),
             b[i].statistics.allocationCount);
+    }
+    extern void perfmon_set_vram_used(float vram_used_mb);
+    if (used > 0) perfmon_set_vram_used((float)(used >> 20));
 }
 
 // ---- pipeline cache file
@@ -1964,14 +1970,58 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
     if (hitch_ms < 0) hitch_ms = getenv("LARECOMP_LOG_HITCH_MS") ? atof(getenv("LARECOMP_LOG_HITCH_MS")) : 0;
     if (hitch_ms > 0 && prev_present > 0 && (now - prev_present) * 1000 > hitch_ms)
         LOG("[hitch] t=%.2f frame %llu gap %.0f ms\n", now, (unsigned long long)frame, (now - prev_present) * 1000);
-    extern void perfmon_frame(uint64_t interval_ns);
-    static uint64_t prev_present_ns;
+    extern void perfmon_frame_ex(uint64_t interval_ns, double replay_ms, double gpu_ms,
+                                 double pipe_ms, double xlate_ms, double tex_uploads);
+    extern void perfmon_set_picture(uint32_t win_w, uint32_t win_h, uint32_t img_w, uint32_t img_h,
+                                    uint32_t scene_w, uint32_t scene_h, int scaler);
+    extern void perfmon_set_vram_used(float vram_used_mb);
+    extern uint64_t vk_cum_exec_ns(void);
+    static uint64_t prev_present_ns, prev_exec_ns, prev_wt_perf[4];
     uint64_t now_ns = SDL_GetTicksNS();
-    if (prev_present_ns > 0) perfmon_frame(now_ns - prev_present_ns);
+    uint64_t cur_exec = vk_cum_exec_ns();
+    uint64_t cur_wt[4];
+    for (int i = 0; i < 4; i++) cur_wt[i] = __atomic_load_n(&g_vk_frame_waits[i], __ATOMIC_RELAXED);
+    if (prev_present_ns > 0) {
+        double rep = cur_exec >= prev_exec_ns ? (cur_exec - prev_exec_ns) / 1e6 : 0;
+        double pipe_w = cur_wt[1] >= prev_wt_perf[1] ? (cur_wt[1] - prev_wt_perf[1]) / 1e6 : 0;
+        double xlate_w = cur_wt[2] >= prev_wt_perf[2] ? (cur_wt[2] - prev_wt_perf[2]) / 1e6 : 0;
+        double tex_u = cur_wt[3] >= prev_wt_perf[3] ? (double)(cur_wt[3] - prev_wt_perf[3]) : 0;
+        uint64_t sp_now[4];
+        static uint64_t sp_perf_prev[2];
+        static bool sp_perf_ok;
+        double gpu_tot = -1;
+        if (vk_gpu_split_ns(sp_now)) {
+            if (sp_perf_ok)
+                gpu_tot = ((sp_now[0] - sp_perf_prev[0]) + (sp_now[1] - sp_perf_prev[1])) / 1e6;
+            sp_perf_prev[0] = sp_now[0], sp_perf_prev[1] = sp_now[1], sp_perf_ok = true;
+        }
+        float rsx = 1, rsy = 1;
+        extern void renderer_get_scale(float *sx, float *sy);
+        renderer_get_scale(&rsx, &rsy);
+        uint32_t sw = (uint32_t)lroundf(1920.0f * rsx), sh = (uint32_t)lroundf(1080.0f * rsy);
+        int sc = (b->width == g_vk.sc_extent.width && b->height == g_vk.sc_extent.height) ? 0 :
+                 (b->width > g_vk.sc_extent.width || b->height > g_vk.sc_extent.height) ? 4 :
+                 g_settings.upscaler == UPSCALE_XESS ? 3 :
+                 g_settings.upscaler == UPSCALE_FSR1 ? 2 : 1;
+        perfmon_set_picture(g_vk.sc_extent.width, g_vk.sc_extent.height, b->width, b->height, sw, sh, sc);
+        perfmon_frame_ex(now_ns - prev_present_ns, rep, gpu_tot, pipe_w, xlate_w, tex_u);
+    }
     prev_present_ns = now_ns;
+    prev_exec_ns = cur_exec;
+    memcpy(prev_wt_perf, cur_wt, sizeof prev_wt_perf);
     prev_present = now;
     pp_mark(PP_REST);  // (the fps line itself is not counted)
     if (now - last_fps_time >= fps_iv) {
+        if (g_vk.vma) {
+            const VkPhysicalDeviceMemoryProperties *mp;
+            vmaGetMemoryProperties(g_vk.vma, &mp);
+            VmaBudget vb[VK_MAX_MEMORY_HEAPS];
+            vmaGetHeapBudgets(g_vk.vma, vb);
+            uint64_t used = 0;
+            for (uint32_t i = 0; i < mp->memoryHeapCount; i++)
+                if (mp->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) used += vb[i].usage;
+            if (used > 0) perfmon_set_vram_used((float)(used >> 20));
+        }
         extern const char *game_level_name(void);
         if (last_fps_time > 0)
             LOG("[vk] t=%.1f frame %llu %.1f fps max %.0fms level %s (%s%s)\n", now, (unsigned long long)frame,

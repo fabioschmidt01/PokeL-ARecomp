@@ -1049,8 +1049,8 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
     // outside the guest memory window too (exec.c pages_changed_outside), it rehashed up to 150 MB a second, finding
     // nothing. LARECOMP_TEX_RECHECK=<frames>: another interval)
     static long recheck = -1;
-    if (recheck < 0) recheck = ENV("LARECOMP_TEX_RECHECK") ? atol(ENV("LARECOMP_TEX_RECHECK")) : 600;
-    bool periodic = frame - b->full_frame >= (uint64_t)recheck && full_hash_budget >= total;
+    if (recheck < 0) recheck = ENV("LARECOMP_TEX_RECHECK") ? atol(ENV("LARECOMP_TEX_RECHECK")) : 3600;
+    bool periodic = recheck > 0 && frame - b->full_frame >= (uint64_t)recheck && full_hash_budget >= total;
     if (!full && periodic) { full = true; full_hash_budget -= total; }
     bool identified_now = !b->tp;  // (button prompts / Hero Mode icon: re-uploaded when their look changes)
     if (identified_now) b->tp = texpatch_marker(t);

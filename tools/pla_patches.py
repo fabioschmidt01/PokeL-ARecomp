@@ -11,7 +11,7 @@ def _pla_60fps(gen, a):
     w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
     assert w == 0x34000168, hex(w)  # cbz w8, +0x2c
     target = a + 0x2c
-    return ('{ extern bool rt_pla_is_60fps(void); '
+    return ('{ extern _Bool rt_pla_is_60fps(void); '
             f'if (rt_pla_is_60fps() || (c->x[8] & 0xffffffff) == 0) {{ goto L_{target:x}; }} }}'
             f'  /* {a:#x}: 60fps unlocked pacing for PLA 1.1.1 */')
 

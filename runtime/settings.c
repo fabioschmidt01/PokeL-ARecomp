@@ -52,8 +52,10 @@ Settings g_settings = {
     .tex_hd = true,
     .shadow_res = 1,
     .shadow_sharp = 1,
+    .gtao = 1,
     .gtao_strength = 100,
     .ssgi_strength = 100,
+    .xess_quality = 3,
     .inv_keys = true,
     .tracker = true,
     .tracker_filters = -1,
@@ -153,7 +155,7 @@ void settings_resolve_defaults(bool integrated) {
     if (g_settings.upscaler_auto) g_settings.upscaler = g_default_upscaler;
     if (g_settings.res_auto) g_settings.res_mode = g_default_res_mode;
     LOG("[settings] %s GPU: upscaler %s (%s), resolution %s (%s), anti-aliasing %s\n", integrated ? "integrated" : "discrete / other",
-        g_settings.upscaler == UPSCALE_BILINEAR ? "bilinear" : g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "metalfx",
+        g_settings.upscaler == UPSCALE_BILINEAR ? "bilinear" : g_settings.upscaler == UPSCALE_XESS ? "xess" : g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "metalfx",
         g_settings.upscaler_auto ? "default" : "chosen", res_name(g_settings.res_mode), g_settings.res_auto ? "default" : "chosen",
         g_settings.antialias == AA_SMAA ? "smaa" : "off");
 }
@@ -314,11 +316,13 @@ void settings_load(void) {
                                   !strcmp(val, "50%") ? RES_Q50 : !strcmp(val, "25%") ? RES_Q25 :
                                   (n >= 1 && n <= 4) ? n : n > 4 ? 4 : RES_MATCH;  // (5x-8x were removed)
         }
-        else if (!strcmp(key, "upscaler")) {  // (metalfx / fsr1: this OS's; auto: never chosen, the GPU's default)
+        else if (!strcmp(key, "upscaler")) {  // (metalfx / fsr1 / xess: this OS's; auto: never chosen, the GPU's default)
             g_settings.upscaler_auto = !strcmp(val, "auto");
-            if (!g_settings.upscaler_auto) g_settings.upscaler = !strcmp(val, "bilinear") ? UPSCALE_BILINEAR : UPSCALE_SHARP;
+            if (!g_settings.upscaler_auto)
+                g_settings.upscaler = !strcmp(val, "bilinear") ? UPSCALE_BILINEAR : !strcmp(val, "xess") ? UPSCALE_XESS : UPSCALE_SHARP;
             else g_settings.upscaler = g_default_upscaler;
         }
+        else if (!strcmp(key, "xess_quality")) { int v = atoi(val); g_settings.xess_quality = v < 0 ? 0 : v > 5 ? 5 : v; }
         else if (!strcmp(key, "antialias")) g_settings.antialias = !strcmp(val, "off") ? AA_OFF : AA_SMAA;  // ("fxaa": SMAA now)
         else if (!strcmp(key, "sharpening")) {
             for (int i = 0; i < SHARPEN_N; i++) if (!strcmp(val, sharpen_names[i])) g_settings.sharpen = i;
@@ -436,7 +440,8 @@ void settings_save(void) {
     fprintf(f, "water_reflections = %d\n", g_settings.water_ssr);
     fprintf(f, "tex_dump = %d\n", g_settings.tex_dump);
     fprintf(f, "upscaler = %s\n", g_settings.upscaler_auto ? "auto" : g_settings.upscaler == UPSCALE_METALFX ? "metalfx" :
-                                   g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "bilinear");
+                                   g_settings.upscaler == UPSCALE_XESS ? "xess" : g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "bilinear");
+    fprintf(f, "xess_quality = %d\n", g_settings.xess_quality);
     fprintf(f, "antialias = %s\n", g_settings.antialias == AA_SMAA ? "smaa" : "off");
     fprintf(f, "sharpening = %s\n", sharpen_names[g_settings.sharpen >= 0 && g_settings.sharpen < SHARPEN_N ? g_settings.sharpen : 0]);
     fprintf(f, "temporal_aa = %s\n", g_settings.taa ? "fsr2" : "game");

@@ -21,6 +21,7 @@
 #include "vk.h"
 #include "record.h"
 #include "vk_fsr2.h"
+#include "vk_xess.h"
 #include "../renderer.h"
 #include "../pace.h"
 #include "../recolour.h"
@@ -395,6 +396,7 @@ int64_t pace_gpu_ns(void) {
     return vk_gpu_split_ns(t) ? (int64_t)(t[0] + t[1]) : -1;
 }
 uint64_t vk_cum_wait_ns(void) { return __atomic_load_n(&cum_wait, __ATOMIC_RELAXED); }  // (all vk_wait_seq waits so far)
+uint64_t vk_cum_exec_ns(void) { return __atomic_load_n(&cum_exec, __ATOMIC_RELAXED); }  // (all command list translation time so far)
 
 static Sub *sub(void) {
     Sub *s = &subs[cur_sub];
@@ -8719,7 +8721,12 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, float fx, flo
     if (ow > 16384) ow = 16384;
     if (oh > 16384) oh = 16384;
     uint32_t cw = (uint32_t)lroundf(b->width * fx), ch = (uint32_t)lroundf(b->height * fy);  // (the contents' size)
-    bool fsr = g_settings.upscaler == UPSCALE_FSR1 && (ow > cw + 1 || oh > ch + 1);  // (an upscale only)
+    bool xess = g_settings.upscaler == UPSCALE_XESS && (ow > cw + 1 || oh > ch + 1);
+    bool fsr = (g_settings.upscaler == UPSCALE_FSR1 || xess) && (ow > cw + 1 || oh > ch + 1);  // (an upscale only)
+    if (xess) {
+        VkXeSSFrame xf = {.color = b->image, .color_view = v, .color_format = b->format, .w = cw, .h = ch, .ow = ow, .oh = oh};
+        vk_xess_record(g_vk.phys, g_vk.dev, cb, &xf, (VkXeSSQuality)(g_settings.xess_quality >= 1 && g_settings.xess_quality <= 5 ? g_settings.xess_quality : XESS_QUALITY_QUALITY));
+    }
     *upscaled = fsr;
     // Internal resolution above the window's: the present's one bilinear tap reads at most 2 x 2 source texels per
     // window pixel - all of them at 2x, 1 in 9 at 3x (its centre: no anti-aliasing at all), 4 in 16 at 4x - so the

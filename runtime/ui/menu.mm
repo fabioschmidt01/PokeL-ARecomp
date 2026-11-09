@@ -614,23 +614,16 @@ static void tab_display(bool in_game) {
         if (opt_choice(TR("Internal resolution", "Resolução interna"), &ri, res, NRES, rdef, d, false))
             g_settings.res_mode = res_mode[ri], g_settings.res_auto = false;
     }
-    {   // each OS's own upscaler next to bilinear (UPSCALE_SHARP: MetalFX on macOS, AMD FSR 1 on Windows)
+    {   // each OS's own upscaler next to bilinear (UPSCALE_SHARP: MetalFX on macOS, AMD FSR 1 / Intel XeSS on Windows)
 #ifdef __APPLE__
         const char *ups[] = {TR("Bilinear", "Bilinear"), "MetalFX"};
         const char *ud = TR("How the image is scaled up to the window when it renders at a lower resolution. MetalFX: Apple's "
                             "upscaler, sharper. Bilinear: plain and soft.",
                             "Como a imagem é ampliada para a janela quando renderiza numa resolução menor. MetalFX: o "
                             "upscaler da Apple, mais nítido. Bilinear: simples e suave.");
-#else
-        const char *ups[] = {TR("Bilinear", "Bilinear"), "AMD FSR 1"};
-        const char *ud = TR("How the image is scaled up to the window when it renders at a lower resolution. AMD FSR 1: "
-                            "edge-aware upscaling and sharpening, sharper. Bilinear: plain and soft.",
-                            "Como a imagem é ampliada para a janela quando renderiza numa resolução menor. AMD FSR 1: "
-                            "ampliação que respeita as bordas, com nitidez - mais nítido. Bilinear: simples e suave.");
-#endif
         int ui = g_settings.upscaler == UPSCALE_BILINEAR ? 0 : 1;
         char udm[700];
-        if (g_settings.res_mode == RES_MATCH) {  // (renders at the window's size: nothing to scale up)
+        if (g_settings.res_mode == RES_MATCH) {
             snprintf(udm, sizeof udm, "%s\n\n%s", ud,
                      TR("Not used at Match display: the game already renders at your display's resolution.",
                         "Não é usado em Igual à tela: o jogo já renderiza na resolução da sua tela."));
@@ -639,6 +632,38 @@ static void tab_display(bool in_game) {
         }
         if (opt_choice("Upscaler", &ui, ups, 2, g_default_upscaler == UPSCALE_BILINEAR ? 0 : 1, ud))
             g_settings.upscaler = ui ? UPSCALE_SHARP : UPSCALE_BILINEAR, g_settings.upscaler_auto = false;
+#else
+        const char *ups[] = {TR("Bilinear", "Bilinear"), "AMD FSR 1", "Intel XeSS"};
+        const char *ud = TR("How the image is scaled up to the window when it renders at a lower resolution. Intel XeSS: "
+                            "AI-accelerated upscaling (XMX on Intel Arc, DP4a on other GPUs). AMD FSR 1: edge-aware "
+                            "upscaling and sharpening. Bilinear: plain and soft.",
+                            "Como a imagem é ampliada para a janela quando renderiza numa resolução menor. Intel XeSS: "
+                            "ampliação acelerada por IA (XMX nas placas Intel Arc, DP4a nas demais). AMD FSR 1: "
+                            "ampliação que respeita as bordas, com nitidez. Bilinear: simples e suave.");
+        int ui = g_settings.upscaler == UPSCALE_BILINEAR ? 0 : g_settings.upscaler == UPSCALE_XESS ? 2 : 1;
+        char udm[700];
+        if (g_settings.res_mode == RES_MATCH) {  // (renders at the window's size: nothing to scale up)
+            snprintf(udm, sizeof udm, "%s\n\n%s", ud,
+                     TR("Not used at Match display: the game already renders at your display's resolution.",
+                        "Não é usado em Igual à tela: o jogo já renderiza na resolução da sua tela."));
+            ud = udm;
+            opt_disable_next();
+        }
+        if (opt_choice("Upscaler", &ui, ups, 3, g_default_upscaler == UPSCALE_BILINEAR ? 0 : 1, ud)) {
+            g_settings.upscaler = ui == 0 ? UPSCALE_BILINEAR : ui == 2 ? UPSCALE_XESS : UPSCALE_FSR1;
+            g_settings.upscaler_auto = false;
+        }
+        if (g_settings.upscaler == UPSCALE_XESS) {
+            const char *xq[] = {TR("Ultra Performance", "Ultra Desempenho"), TR("Performance", "Desempenho"),
+                                TR("Balanced", "Equilibrado"), TR("Quality", "Qualidade"),
+                                TR("Ultra Quality", "Ultra Qualidade"), TR("Native AA", "AA Nativo")};
+            int qi = g_settings.xess_quality >= 0 && g_settings.xess_quality <= 5 ? g_settings.xess_quality : 3;
+            if (opt_choice(TR("XeSS quality", "Qualidade do XeSS"), &qi, xq, 6, 3,
+                           TR("Intel XeSS 3.0.2 quality preset (XMX hardware accelerated on Intel Arc GPUs).",
+                              "Perfil de qualidade do Intel XeSS 3.0.2 (acelerado via hardware XMX nas placas Intel Arc).")))
+                g_settings.xess_quality = qi;
+        }
+#endif
     }
     const char *aa[] = {TR("Off", "Desligado"), "SMAA"};
     opt_choice("Anti-aliasing", &g_settings.antialias, aa, 2, AA_OFF,
@@ -1243,6 +1268,28 @@ void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, v
     g_font = f0, g_font_big = f1;
 }
 
+static void perf_right_str(const char *s, bool dim) {
+    float pad = ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(s).x;
+    if (pad > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + pad);
+    if (dim) ImGui::TextDisabled("%s", s);
+    else ImGui::TextUnformatted(s);
+}
+
+static void perf_cell_fmt(const char *fmt, float v) {
+    ImGui::TableNextColumn();
+    if (v < 0) return perf_right_str("-", true);
+    char b[64];
+    snprintf(b, sizeof b, fmt, v);
+    perf_right_str(b, false);
+}
+
+static void perf_label_str(const char *label, const ImVec4 &c) {
+    ImGui::TableNextColumn();
+    ImGui::TextColored(c, "%s", label);
+}
+
+static float perf_gb(float mb) { return mb < 0 ? -1.0f : mb / 1024.0f; }
+
 static void perfmon_draw(const ImVec2 &display, float scale) {
     int mode = perfmon_get_mode();
     if (!mode && !g_settings.show_fps) return;
@@ -1250,123 +1297,149 @@ static void perfmon_draw(const ImVec2 &display, float scale) {
     perfmon_snapshot(&s);
 
     if (mode == 1 || (mode == 0 && g_settings.show_fps)) {
-        // Mode 1: Compact FPS pill in the top-right corner
+        // Mode 1: Compact FPS pill in the top-right corner (TotK style)
         char buf[64];
         float cur_fps = s.fps > 0 ? s.fps : ImGui::GetIO().Framerate;
         float cur_ms = s.frame_ms_avg > 0 ? s.frame_ms_avg : (cur_fps > 0 ? 1000.0f / cur_fps : 16.6f);
-        snprintf(buf, sizeof buf, "%.1f FPS (%.1f ms)", cur_fps, cur_ms);
+        snprintf(buf, sizeof buf, "%.0f FPS  %.1f ms", cur_fps, cur_ms);
+        ImDrawList *dl = g_open.load() ? ImGui::GetBackgroundDrawList() : ImGui::GetForegroundDrawList();
         ImVec2 sz = ImGui::CalcTextSize(buf);
-        float pad = 8.0f * scale;
-        float x = display.x - sz.x - pad * 2 - 16.0f * scale;
-        float y = 16.0f * scale;
-        ImDrawList *dl = ImGui::GetForegroundDrawList();
-        dl->AddRectFilled(ImVec2(x, y), ImVec2(x + sz.x + pad * 2, y + sz.y + pad * 2), IM_COL32(10, 15, 24, 210), 6.0f * scale);
-        dl->AddRect(ImVec2(x, y), ImVec2(x + sz.x + pad * 2, y + sz.y + pad * 2), IM_COL32(230, 180, 50, 180), 6.0f * scale, 0, 1.5f);
-        dl->AddText(ImVec2(x + pad, y + pad), IM_COL32(255, 255, 255, 240), buf);
+        float pad = 6.0f * scale;
+        ImVec2 p(display.x - 12.0f * scale - sz.x - pad * 2, 12.0f * scale);
+        dl->AddRectFilled(p, ImVec2(p.x + sz.x + pad * 2, p.y + sz.y + pad * 2), IM_COL32(0, 0, 0, 150), 4.0f * scale);
+        dl->AddText(ImVec2(p.x + pad, p.y + pad), IM_COL32(255, 255, 255, 235), buf);
         return;
     }
 
     if (mode == 2) {
-        // Mode 2: Full RivaTuner HUD
-        float panel_w = 360.0f * scale;
-        ImGui::SetNextWindowPos(ImVec2(display.x - panel_w - 16.0f * scale, 16.0f * scale), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(panel_w, 0), ImGuiCond_Always);
-        ImGui::SetNextWindowBgAlpha(0.88f);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.04f, 0.06f, 0.10f, 0.90f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.90f, 0.70f, 0.20f, 0.60f));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * scale, 10.0f * scale));
+        // Mode 2: Full TotK Recomp Performance Monitor (3 auto-sized tables + graph + hardware footer)
+        ImGui::SetNextWindowPos(ImVec2(display.x - 12.0f * scale, 12.0f * scale), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+        ImGui::SetNextWindowBgAlpha(0.65f);
+        ImGui::Begin("##perf", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                        ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                                        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings);
+        if (g_open.load()) ImGui::BringWindowToDisplayBack(ImGui::GetCurrentWindow());
+        else ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+        ImGui::SetWindowFontScale(0.72f);
 
-        ImGui::Begin("##perfhud", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                                        ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
+        const ImVec4 gpu_c(0.55f, 0.83f, 0.31f, 1.0f), cpu_c(0.18f, 0.59f, 0.80f, 1.0f),
+                     ram_c(0.80f, 0.45f, 0.70f, 1.0f), fps_c(0.95f, 0.95f, 0.95f, 1.0f),
+                     wait_c(0.93f, 0.76f, 0.33f, 1.0f), pic_c(0.62f, 0.70f, 0.95f, 1.0f);
 
-        // Header: GPU
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.9f, 1.0f), "GPU");
-        ImGui::SameLine(100.0f * scale);
-        if (s.gpu_pct >= 0) ImGui::Text("%.0f%%", s.gpu_pct); else ImGui::TextDisabled("N/A");
-        if (s.gpu_temp_c > 0) {
-            ImGui::SameLine(180.0f * scale);
-            ImGui::Text("%.0f°C", s.gpu_temp_c);
-        }
-        if (s.gpu_power_w > 0) {
-            ImGui::SameLine(250.0f * scale);
-            ImGui::Text("%.0fW", s.gpu_power_w);
-        }
+        ImGui::TextDisabled("%s", TR("PLA Recomp 0.0.19, game 1.1.1", "PLA Recomp 0.0.19, jogo 1.1.1"));
 
-        // VRAM
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.9f, 1.0f), "VRAM");
-        ImGui::SameLine(100.0f * scale);
-        if (s.vram_used_mb > 0 && s.vram_total_mb > 0) {
-            ImGui::Text("%.1f / %.1f GB", s.vram_used_mb / 1024.0f, s.vram_total_mb / 1024.0f);
-        } else if (s.vram_total_mb > 0) {
-            ImGui::Text("%.1f GB", s.vram_total_mb / 1024.0f);
-        } else {
-            ImGui::TextDisabled("N/A");
-        }
-        if (s.gpu_clock_mhz > 0) {
-            ImGui::SameLine(250.0f * scale);
-            ImGui::Text("%.0f MHz", s.gpu_clock_mhz);
-        }
+        if (ImGui::BeginTable("##perft", 4, ImGuiTableFlags_SizingFixedFit)) {
+            float w0 = ImGui::CalcTextSize(TR("Frame", "Quadro")).x + 8.0f * scale;
+            float w1 = ImGui::CalcTextSize("888.8 ms").x + 8.0f * scale;
+            float w2 = ImGui::CalcTextSize(TR("max 8888.8 ms", "máx. 8888.8 ms")).x + 8.0f * scale;
+            float w3 = ImGui::CalcTextSize(TR("0.1% low 888", "0.1% piores 888")).x + 8.0f * scale;
+            ImGui::TableSetupColumn("##c0", ImGuiTableColumnFlags_WidthFixed, w0);
+            ImGui::TableSetupColumn("##c1", ImGuiTableColumnFlags_WidthFixed, w1);
+            ImGui::TableSetupColumn("##c2", ImGuiTableColumnFlags_WidthFixed, w2);
+            ImGui::TableSetupColumn("##c3", ImGuiTableColumnFlags_WidthFixed, w3);
 
-        // CPU
-        ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.3f, 1.0f), "CPU");
-        ImGui::SameLine(100.0f * scale);
-        if (s.cpu_total_pct >= 0) ImGui::Text("%.0f%%", s.cpu_total_pct); else ImGui::TextDisabled("N/A");
-        if (s.cpu_game_pct >= 0) {
-            ImGui::SameLine(180.0f * scale);
-            ImGui::Text("Game: %.0f%%", s.cpu_game_pct);
-        }
-        if (s.cpu_temp_c > 0) {
-            ImGui::SameLine(270.0f * scale);
-            ImGui::Text("%.0f°C", s.cpu_temp_c);
-        }
+            perf_label_str("GPU", gpu_c);
+            perf_cell_fmt("%.0f%%", s.gpu_pct);
+            perf_cell_fmt("%.0f °C", s.gpu_temp_c);
+            perf_cell_fmt("%.0f W", s.gpu_power_w);
 
-        // RAM
-        ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.2f, 1.0f), "RAM");
-        ImGui::SameLine(100.0f * scale);
-        if (s.ram_used_mb > 0 && s.ram_total_mb > 0) {
-            ImGui::Text("%.1f / %.1f GB", s.ram_used_mb / 1024.0f, s.ram_total_mb / 1024.0f);
-        } else {
-            ImGui::TextDisabled("N/A");
-        }
-        if (s.ram_game_mb > 0) {
-            ImGui::SameLine(250.0f * scale);
-            ImGui::Text("Game: %.1f GB", s.ram_game_mb / 1024.0f);
+            perf_label_str("VRAM", gpu_c);
+            perf_cell_fmt("%.1f GB", perf_gb(s.vram_used_mb));
+            perf_cell_fmt("/ %.1f GB", perf_gb(s.vram_total_mb));
+            perf_cell_fmt("%.0f MHz", s.gpu_clock_mhz);
+
+            perf_label_str("CPU", cpu_c);
+            perf_cell_fmt("%.0f%%", s.cpu_total_pct);
+            perf_cell_fmt("%.0f °C", s.cpu_temp_c);
+            perf_cell_fmt(TR("game %.0f%%", "jogo %.0f%%"), s.cpu_game_pct);
+
+            perf_label_str("RAM", ram_c);
+            perf_cell_fmt("%.1f GB", perf_gb(s.ram_used_mb));
+            perf_cell_fmt("/ %.1f GB", perf_gb(s.ram_total_mb));
+            perf_cell_fmt(TR("game %.1f GB", "jogo %.1f GB"), perf_gb(s.ram_game_mb));
+
+            ImGui::TableNextRow(ImGuiTableRowFlags_None, 6.0f * scale);
+
+            float cur_fps = s.fps > 0 ? s.fps : ImGui::GetIO().Framerate;
+            float cur_ms = s.frame_ms_avg > 0 ? s.frame_ms_avg : (cur_fps > 0 ? 1000.0f / cur_fps : 16.6f);
+            perf_label_str("FPS", fps_c);
+            perf_cell_fmt("%.0f", cur_fps);
+            perf_cell_fmt(TR("1%% low %.0f", "1%% piores %.0f"), s.low1_fps);
+            perf_cell_fmt(TR("0.1%% low %.0f", "0.1%% piores %.0f"), s.low01_fps);
+
+            perf_label_str(TR("Frame", "Quadro"), fps_c);
+            perf_cell_fmt("%.1f ms", cur_ms);
+            perf_cell_fmt(TR("max %.1f ms", "máx. %.1f ms"), s.frame_ms_max > 0 ? s.frame_ms_max : cur_ms);
+            ImGui::TableNextColumn();
+            ImGui::EndTable();
         }
 
-        ImGui::Separator();
+        float top = s.frame_ms_max > 50.0f ? s.frame_ms_max : 50.0f;
+        ImGuiWindow *win = ImGui::GetCurrentWindow();
+        float max_x = win->DC.CursorMaxPos.x;
+        ImGui::PlotLines("##ft", s.frame_ms, PERF_HISTORY, 0, nullptr, 0.0f, top, ImVec2(-FLT_MIN, 48.0f * scale));
+        win->DC.CursorMaxPos.x = max_x;
 
-        // FPS & Lows
-        float cur_fps = s.fps > 0 ? s.fps : ImGui::GetIO().Framerate;
-        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.4f, 1.0f), "FPS: %.1f", cur_fps);
-        if (s.low1_fps > 0) {
-            ImGui::SameLine(130.0f * scale);
-            ImGui::Text("1%%: %.0f", s.low1_fps);
+        if (ImGui::BeginTable("##perfw", 2, ImGuiTableFlags_SizingFixedFit)) {
+            float w1 = fmaxf(ImGui::CalcTextSize("888.88 ms").x, ImGui::CalcTextSize(TR("888.8 per frame", "888.8 por quadro")).x) + 8.0f * scale;
+            ImGui::TableSetupColumn("##w0", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("##w1", ImGuiTableColumnFlags_WidthFixed, w1);
+
+            perf_label_str(TR("GPU frame prep", "Preparo de quadro da GPU"), wait_c);
+            perf_cell_fmt("%.2f ms", s.replay_ms);
+            perf_label_str(TR("GPU busy per frame", "GPU ocupada por quadro"), wait_c);
+            perf_cell_fmt("%.2f ms", s.gpu_ms);
+            perf_label_str(TR("Pipeline waits", "Esperas de pipeline"), wait_c);
+            perf_cell_fmt("%.2f ms", s.pipe_wait_ms);
+            perf_label_str(TR("Shader waits", "Esperas de shader"), wait_c);
+            perf_cell_fmt("%.2f ms", s.xlate_ms);
+            perf_label_str(TR("Texture uploads", "Envios de textura"), wait_c);
+            perf_cell_fmt(TR("%.1f per frame", "%.1f por quadro"), s.tex_uploads);
+            ImGui::EndTable();
         }
-        if (s.low01_fps > 0) {
-            ImGui::SameLine(220.0f * scale);
-            ImGui::Text("0.1%%: %.0f", s.low01_fps);
+
+        {
+            uint32_t ww = s.win_w ? s.win_w : (uint32_t)display.x, wh = s.win_h ? s.win_h : (uint32_t)display.y;
+            uint32_t iw = s.image_w ? s.image_w : ww, ih = s.image_h ? s.image_h : wh;
+            uint32_t sw = s.scene_w ? s.scene_w : iw, sh = s.scene_h ? s.scene_h : ih;
+            char v[6][64];
+            snprintf(v[0], sizeof v[0], "%ux%u", ww, wh);
+            snprintf(v[1], sizeof v[1], "%ux%u", iw, ih);
+            snprintf(v[2], sizeof v[2], "%ux%u, %.0f%%", sw, sh, ww ? (sw * 100.0 / ww) : 100.0);
+            snprintf(v[3], sizeof v[3], "%s",
+                     s.scaler == 3 ? "Intel XeSS" :
+                     s.scaler == 2 ? "AMD FSR 1" :
+                     s.scaler == 4 ? TR("downscale", "redução") :
+                     s.scaler == 1 ? TR("bilinear", "bilinear") : TR("none (1:1)", "nenhuma (1:1)"));
+            snprintf(v[4], sizeof v[4], "%s", g_settings.fps60 ? "60 FPS" : "30 FPS");
+            snprintf(v[5], sizeof v[5], "%s", g_settings.present_fifo ? "VSync" : TR("Low latency", "Baixa latência"));
+
+            const char *labels[6] = {
+                TR("Window", "Janela"),
+                TR("Game image", "Imagem do jogo"),
+                TR("3D scene", "Cena 3D"),
+                TR("Scaling", "Escala"),
+                TR("Frame limit", "Limite de quadros"),
+                TR("Presentation", "Apresentação")
+            };
+            if (ImGui::BeginTable("##perfp", 2, ImGuiTableFlags_SizingFixedFit)) {
+                float vw = 0;
+                for (int i = 0; i < 6; i++) vw = fmaxf(vw, ImGui::CalcTextSize(v[i]).x);
+                ImGui::TableSetupColumn("##p0", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("##p1", ImGuiTableColumnFlags_WidthFixed, vw + 8.0f * scale);
+                for (int i = 0; i < 6; i++) {
+                    perf_label_str(labels[i], pic_c);
+                    ImGui::TableNextColumn();
+                    perf_right_str(v[i], false);
+                }
+                ImGui::EndTable();
+            }
         }
 
-        // Frametimes
-        float cur_ms = s.frame_ms_avg > 0 ? s.frame_ms_avg : (cur_fps > 0 ? 1000.0f / cur_fps : 16.6f);
-        ImGui::Text("Frametime: %.1f ms", cur_ms);
-        if (s.frame_ms_max > 0) {
-            ImGui::SameLine(220.0f * scale);
-            ImGui::Text("Max: %.1f ms", s.frame_ms_max);
-        }
-
-        // Frametime Graph (120 frames history)
-        float max_ft = s.frame_ms_max > 40.0f ? s.frame_ms_max : 40.0f;
-        ImGui::PlotLines("##ftgraph", s.frame_ms, PERF_HISTORY, 0, NULL, 0.0f, max_ft, ImVec2(panel_w - 24.0f * scale, 42.0f * scale));
-
-        // Hardware names footer
-        if (s.gpu_name[0]) ImGui::TextDisabled("%.36s", s.gpu_name);
-        if (s.cpu_name[0]) ImGui::TextDisabled("%.36s", s.cpu_name);
+        if (s.gpu_name[0]) ImGui::TextDisabled("%s", s.gpu_name);
+        if (s.cpu_name[0]) ImGui::TextDisabled("%s", s.cpu_name);
 
         ImGui::End();
-        ImGui::PopStyleVar(2);
-        ImGui::PopStyleColor(2);
     }
 }
 

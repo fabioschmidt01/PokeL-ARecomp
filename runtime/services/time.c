@@ -40,7 +40,7 @@ static void system_clock(Service *s, IpcReq *req, IpcResp *resp) {
     switch (req->cmd) {
     case 0: OUT(int64_t, 0) = unix_now(); resp_size(resp, 8); break;  // GetCurrentTime
     case 2: write_system_context(resp->data); resp_size(resp, 0x20); break;  // GetSystemClockContext
-    default: LOG("[time] ISystemClock cmd %u (ok)\n", req->cmd);
+    default: { static int nlog; if (nlog++ < 3) LOG("[time] ISystemClock cmd %u (ok)\n", req->cmd); }
     }
 }
 
@@ -52,7 +52,12 @@ static void steady_clock(Service *s, IpcReq *req, IpcResp *resp) {
         memcpy(resp->data + 8, clock_uuid, 16);
         resp_size(resp, 0x18);
         break;
-    default: OUT(int64_t, 0) = 0; resp_size(resp, 8); LOG("[time] ISteadyClock cmd %u (ok)\n", req->cmd);
+    default: {
+        OUT(int64_t, 0) = 0;
+        resp_size(resp, 8);
+        static int nlog;
+        if (nlog++ < 3) LOG("[time] ISteadyClock cmd %u (ok)\n", req->cmd);
+    }
     }
 }
 
@@ -84,6 +89,12 @@ static void timezone_service(Service *s, IpcReq *req, IpcResp *resp) {
     (void)s;
     switch (req->cmd) {
     case 0: memcpy(resp->data, "UTC", 4); resp_size(resp, 0x24); break;  // GetDeviceLocationName
+    case 1: break;  // SetDeviceLocationName
+    case 2: OUT(int32_t, 0) = 1; resp_size(resp, 4); break;  // GetTotalLocationNameCount
+    case 4:  // LoadTimeZoneRule (called frequently by PLA: do not spam stderr every frame)
+        if (req->nb && req->b[0].addr && req->b[0].size)
+            memset((void *)(uintptr_t)req->b[0].addr, 0, req->b[0].size);
+        break;
     case 100: to_calendar(IN(int64_t, 0), resp, 1); break;  // ToCalendarTime(rule buffer)
     case 101: to_calendar(IN(int64_t, 0), resp, 0); break;  // ToCalendarTimeWithMyRule
     case 201: {  // ToPosixTimeWithMyRule -> count + buffer of posix times
@@ -98,7 +109,11 @@ static void timezone_service(Service *s, IpcReq *req, IpcResp *resp) {
         resp_size(resp, 4);
         break;
     }
-    default: LOG("[time] ITimeZoneService cmd %u (ok)\n", req->cmd); resp_size(resp, 0x10);
+    default: {
+        static int nlog;
+        if (nlog++ < 3) LOG("[time] ITimeZoneService cmd %u (ok)\n", req->cmd);
+        resp_size(resp, 0x10);
+    }
     }
 }
 
