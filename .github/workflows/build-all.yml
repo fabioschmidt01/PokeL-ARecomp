@@ -47,11 +47,27 @@ jobs:
         shell: bash
         run: |
           unset INCLUDE LIB LIBPATH
-          if [ -d "/d/a/_temp/setup-msys2/msys64/ucrt64/bin" ]; then
-            export PATH="/d/a/_temp/setup-msys2/msys64/ucrt64/bin:/d/a/_temp/setup-msys2/msys64/usr/bin:$PATH"
+          UCRT_DIR=""
+          for candidate in \
+            "/d/a/_temp/setup-msys2/msys64/ucrt64/bin" \
+            "/d/a/_temp/setup-msys2/ucrt64/bin" \
+            "/c/msys64/ucrt64/bin" \
+            "/c/hostedtoolcache/windows/msys64/ucrt64/bin"; do
+            if [ -x "$candidate/clang.exe" ]; then
+              UCRT_DIR="$candidate"
+              break
+            fi
+          done
+          if [ -z "$UCRT_DIR" ]; then
+            UCRT_CLANG=$(find /d/a/_temp /c -maxdepth 5 -name "clang.exe" 2>/dev/null | grep -i "ucrt64/bin/clang.exe" | head -n 1 || true)
+            [ -n "$UCRT_CLANG" ] && UCRT_DIR=$(dirname "$UCRT_CLANG")
           fi
-          if [ -d "/c/msys64/ucrt64/bin" ]; then
-            export PATH="/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH"
+          if [ -n "$UCRT_DIR" ]; then
+            CLEAN_PATH=$(echo "$PATH" | tr ':' '\n' | grep -v -i "Program Files/LLVM" | grep -v -i "Windows Kits" | tr '\n' ':')
+            export PATH="$UCRT_DIR:$(dirname "$UCRT_DIR")/usr/bin:$CLEAN_PATH"
+            echo "Using UCRT64 toolchain at: $UCRT_DIR"
+            echo "Clang binary: $(which clang)"
+            clang --version
           fi
           export ZIP=1
           bash tools/za/dist.sh
