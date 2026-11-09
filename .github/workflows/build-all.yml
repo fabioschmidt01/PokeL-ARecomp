@@ -30,8 +30,35 @@ jobs:
           msystem: UCRT64
           update: false
           path-type: inherit
-          install: make git curl tar xz diffutils zip unzip python nasm
-          pacboy: clang:p lld:p gcc:p binutils:p python:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p vulkan-memory-allocator:p nasm:p diffutils:p
+          install: make nasm diffutils
+
+      - name: Install MSYS2 UCRT64 Packages
+        shell: msys2 {0}
+        run: |
+          sed -i 's/#DisableDownloadTimeout/DisableDownloadTimeout/g' /etc/pacman.conf || true
+          grep -q "DisableDownloadTimeout" /etc/pacman.conf || echo "DisableDownloadTimeout" >> /etc/pacman.conf
+          sed -i 's/#ParallelDownloads = 5/ParallelDownloads = 5/g' /etc/pacman.conf || true
+          for i in 1 2 3 4 5; do
+            echo "Pacman install attempt $i..."
+            if pacman -S --needed --noconfirm --disable-download-timeout \
+              mingw-w64-ucrt-x86_64-clang \
+              mingw-w64-ucrt-x86_64-lld \
+              mingw-w64-ucrt-x86_64-gcc \
+              mingw-w64-ucrt-x86_64-binutils \
+              mingw-w64-ucrt-x86_64-sdl3 \
+              mingw-w64-ucrt-x86_64-vulkan-devel \
+              mingw-w64-ucrt-x86_64-shaderc \
+              mingw-w64-ucrt-x86_64-spirv-tools \
+              mingw-w64-ucrt-x86_64-pkgconf \
+              mingw-w64-ucrt-x86_64-vulkan-memory-allocator; then
+              echo "Pacman packages installed successfully!"
+              exit 0
+            fi
+            echo "Attempt $i failed, retrying in 5s..."
+            sleep 5
+          done
+          echo "All pacman install attempts failed!"
+          exit 1
 
       - name: Setup Python
         uses: actions/setup-python@v5
