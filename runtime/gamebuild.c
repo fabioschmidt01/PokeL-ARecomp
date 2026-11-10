@@ -389,7 +389,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     }
     Tools t;
     if (!find_tools(&t)) {
-        snprintf(why, why_size, "the game code builder is missing from this copy of ZA Recomp");
+        snprintf(why, why_size, "the game code builder is missing from this copy of PokeL-ARecomp");
         return false;
     }
     char work[1100], tmp[1100];

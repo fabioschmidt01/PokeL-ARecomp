@@ -103,6 +103,7 @@ dotnet publish tools/zaimport -c Release -r win-x64 --self-contained true -p:Pub
 # 5. the folder
 rm -rf build/dist-za && mkdir -p "$D/gamelib-src" "$D/zaimport"
 cp $B/lasrecomp.exe $B/lasrecomp.dll.a "$D/"
+cp $B/lasrecomp.exe "$D/PokeL-ARecomp.exe"
 cp -R build/helper/lasgen "$D/"
 cp -R build/helper/zaprompts "$D/"
 cp third_party/ooz/COPYING "$D/zaprompts/COPYING-GPLv3.txt"

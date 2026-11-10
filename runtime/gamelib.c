@@ -117,7 +117,32 @@ bool gamelib_present(const char *game_dir) {
 
 static const GameLibTables *open_lib(const char *path, const char *want) {
 #ifdef _WIN32
-    HMODULE h = LoadLibraryA(path);
+    // Ensure the application directory is in the DLL search path
+    char exe_dir[MAX_PATH] = "";
+    if (GetModuleFileNameA(NULL, exe_dir, sizeof exe_dir)) {
+        char *last_slash = strrchr(exe_dir, '\\');
+        if (!last_slash) last_slash = strrchr(exe_dir, '/');
+        if (last_slash) {
+            *last_slash = '\0';
+            SetDllDirectoryA(exe_dir);
+            // Ensure lasrecomp.exe exists as a companion alias so lasgame.dll's import binds
+            char lasrecomp_path[MAX_PATH];
+            snprintf(lasrecomp_path, sizeof lasrecomp_path, "%s\\lasrecomp.exe", exe_dir);
+            char self_path[MAX_PATH];
+            GetModuleFileNameA(NULL, self_path, sizeof self_path);
+            if (GetFileAttributesA(lasrecomp_path) == INVALID_FILE_ATTRIBUTES) {
+                if (!CreateHardLinkA(lasrecomp_path, self_path, NULL)) {
+                    CopyFileA(self_path, lasrecomp_path, FALSE);
+                }
+            }
+        }
+    }
+    // If running under a renamed binary (e.g. PokeL-ARecomp.exe), load lasrecomp.exe so its exported symbols are in the PEB module list
+    if (!GetModuleHandleA("lasrecomp.exe")) {
+        LoadLibraryA("lasrecomp.exe");
+    }
+    HMODULE h = LoadLibraryExA(path, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (!h) h = LoadLibraryA(path);
     if (!h) { snprintf(g_error, sizeof g_error, "can't load %s (error %lu)", path, GetLastError()); return NULL; }
     GameLibEntry entry = (GameLibEntry)(void *)GetProcAddress(h, GAMELIB_ENTRY);
 #else

@@ -102,8 +102,8 @@ static const char *build_version(const uint8_t id[8]) {
 }
 static bool build_is_za(const uint8_t id[8]) { return build_version(id) && memcmp(id, BUILD_ID, 8); }
 // The release tag this build is (also names the release files; Makefile / tools/bundle_macos.sh / make_dmg.sh read
-// it): ZA Recomp's v<major>.<minor>.<patch> (Hexveil404/PokeZ-ARecomp releases).
-#define LARECOMP_VERSION "v0.0.21"
+// it): PokeL-ARecomp's v<major>.<minor>.<patch>.
+#define LARECOMP_VERSION "v0.0.22"
 extern "C" const char *rt_version(void) { return LARECOMP_VERSION; }  // (runtime/main.c: the log's first line)
 extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }  // (the shader caches' tag)
 
@@ -424,8 +424,7 @@ static const char *fail_hint(int k, bool pt) {
         "dump (.xci / .nsp) and your prod.keys.",
         "Pok\xc3\xa9mon Legends Z-A's base game isn't among those files. Choose the folder with your own dump.",
         "Make sure there's about 12 GB free and try again.",
-        "ZA Recomp runs versions 1.0.0, 2.0.0 and 2.0.2 of the game (base game, or base game + the 2.0.0 or 2.0.2 "
-        "update).",
+        "PokeL-ARecomp runs version 1.1.1 of the game (base game + the 1.1.1 / v262144 update).",
         "Some files are missing. Choose the folder again; if it happens again, dump the game again.",
         "Make sure there's about 4 GB free and try again. If it keeps happening, report it on GitHub.",
         "Put the prod.keys (and title.keys) dumped from your own Switch in the folder with the game files. Any file "
@@ -617,7 +616,7 @@ static bool import_packages(const std::vector<std::string> &pkgs, const std::str
     char tool[1100];
     if (!rt_resource("zaimport/zaimport" PLAT_EXE_SUFFIX, "build/zaimport/zaimport" PLAT_EXE_SUFFIX,
                      tool, sizeof tool)) {
-        err = "the game file importer is missing from this copy of ZA Recomp";
+        err = "the game file importer is missing from this copy of PokeL-ARecomp";
         return false;
     }
     std::string log = g_root + "/import.log";
@@ -1524,16 +1523,41 @@ static void icon(ImDrawList *dl, int k, float cx, float cy, float size, ImU32 co
         break;
     }
 }
-// the project's mark: a hexagon with a Z (drawn: no image file)
+// the project's mark: Arceus Celestial Wheel (Roda Celestial de Arceus)
 static void logo(ImDrawList *dl, float x, float y, float size) {
-    float u = size / 30;
+    float u = size / 30.0f;
     auto Q = [&](float a, float b) { return P(x + a * u, y + b * u); };
-    dl->AddCircle(Q(15, 15), 13 * u, C_GOLD, 32, 2 * u * g_s);
-    dl->AddLine(Q(15, 2), Q(15, 28), C_GOLD, 1.5f * u * g_s);
-    dl->AddLine(Q(2, 15), Q(28, 15), C_GOLD, 1.5f * u * g_s);
-    ImVec2 a_pts[] = {Q(9.5f, 22), Q(15, 8), Q(20.5f, 22)};
-    dl->AddPolyline(a_pts, 3, C_TEXT, 0, 2.2f * u * g_s);
-    dl->AddLine(Q(11.5f, 17), Q(18.5f, 17), C_TEXT, 2.0f * u * g_s);
+
+    // Outer golden halo aura
+    dl->AddCircle(Q(15, 15), 13.5f * u, IM_COL32(245, 158, 11, 70), 36, 3.5f * u * g_s);
+    // Main sacred golden wheel
+    dl->AddCircle(Q(15, 15), 12.0f * u, C_GOLD, 36, 2.2f * u * g_s);
+
+    // Sacred Cardinal Spokes (extending slightly past ring with ornate cross bars)
+    dl->AddLine(Q(15, 1), Q(15, 29), C_GOLD, 2.0f * u * g_s);
+    dl->AddLine(Q(1, 15), Q(29, 15), C_GOLD, 2.0f * u * g_s);
+
+    // Four diagonal arched wings of Arceus (the iconic flared outer arches)
+    ImVec2 wing_ne[] = {Q(15, 6), Q(21, 9), Q(24, 15)};
+    ImVec2 wing_se[] = {Q(24, 15), Q(21, 21), Q(15, 24)};
+    ImVec2 wing_sw[] = {Q(15, 24), Q(9, 21), Q(6, 15)};
+    ImVec2 wing_nw[] = {Q(6, 15), Q(9, 9), Q(15, 6)};
+    dl->AddPolyline(wing_ne, 3, C_GOLD_HI, 0, 1.8f * u * g_s);
+    dl->AddPolyline(wing_se, 3, C_GOLD_HI, 0, 1.8f * u * g_s);
+    dl->AddPolyline(wing_sw, 3, C_GOLD_HI, 0, 1.8f * u * g_s);
+    dl->AddPolyline(wing_nw, 3, C_GOLD_HI, 0, 1.8f * u * g_s);
+
+    // The 4 Cardinal Emerald Jewels of Creation
+    const ImU32 C_EMERALD = IM_COL32(52, 211, 153, 255);
+    dl->AddCircleFilled(Q(15, 3.5f), 2.2f * u * g_s, C_EMERALD, 16);
+    dl->AddCircleFilled(Q(15, 26.5f), 2.2f * u * g_s, C_EMERALD, 16);
+    dl->AddCircleFilled(Q(3.5f, 15), 2.2f * u * g_s, C_EMERALD, 16);
+    dl->AddCircleFilled(Q(26.5f, 15), 2.2f * u * g_s, C_EMERALD, 16);
+
+    // Center Divine Core: golden ring with radiant celestial cyan jewel
+    dl->AddCircleFilled(Q(15, 15), 4.2f * u * g_s, C_GOLD, 24);
+    dl->AddCircleFilled(Q(15, 15), 2.5f * u * g_s, IM_COL32(15, 23, 42, 255), 16);
+    dl->AddCircleFilled(Q(15, 15), 1.6f * u * g_s, IM_COL32(103, 232, 249, 255), 12);
 }
 
 // A button. kind: primary (gold), secondary (glass), ghost (text), tab. w <= 0: as wide as its text. True when pressed.
@@ -1594,69 +1618,159 @@ static bool toggle(const char *id, bool *v, float x, float y) {
     return pressed;
 }
 
-// ---- the background: a night city of our own (sky, aurora, crescent moon, a tower with golden rings, lit windows),
-// drawn to cover the window (a 1280 x 720 picture, cropped to the window's shape)
+// ---- the background: Hisui Realm (Cosmic night sky, Space-Time Rift vortex, Mount Coronet peaks with snow,
+// cedar pine silhouettes and warm feudal stone lanterns), covering 1280 x 720
 static void draw_art(ImDrawList *dl, ImVec2 o, ImVec2 ds) {
-    float k = fmaxf(ds.x / 1280, ds.y / 720);
-    ImVec2 off(o.x + (ds.x - 1280 * k) / 2, o.y + (ds.y - 720 * k) / 2);
+    float k = fmaxf(ds.x / 1280.0f, ds.y / 720.0f);
+    ImVec2 off(o.x + (ds.x - 1280.0f * k) / 2.0f, o.y + (ds.y - 720.0f * k) / 2.0f);
     auto A = [&](float x, float y) { return ImVec2(off.x + x * k, off.y + y * k); };
-    auto band = [&](float y0, float y1, ImU32 a, ImU32 b) { dl->AddRectFilledMultiColor(A(0, y0), A(1280, y1), a, a, b, b); };
-    band(0, 360, IM_COL32(5, 11, 23, 255), IM_COL32(11, 36, 54, 255));
-    band(360, 590, IM_COL32(11, 36, 54, 255), IM_COL32(23, 68, 81, 255));
-    band(590, 720, IM_COL32(23, 68, 81, 255), IM_COL32(42, 90, 92, 255));
-    for (int i = 0; i < 18; i++)  // (a soft teal aurora up left: stacked translucent discs)
-        dl->AddCircleFilled(A(320, 150), (640 - i * 34) * k, IM_COL32(63, 208, 201, 3), 64);
-    static const float stars[][4] = {{64, 48, 1.2f, .8f}, {142, 110, .9f, .6f}, {230, 36, 1.4f, .9f}, {318, 88, .8f, .5f},
-                                     {402, 22, 1.1f, .7f}, {470, 140, .9f, .5f}, {556, 64, 1.3f, .8f}, {640, 30, .8f, .6f},
-                                     {712, 118, 1, .6f}, {790, 52, 1.4f, .9f}, {860, 96, .9f, .5f}, {934, 28, 1.1f, .7f},
-                                     {1180, 60, 1.2f, .8f}, {1240, 132, .9f, .6f}, {1112, 210, .8f, .5f}, {96, 190, 1, .5f},
-                                     {276, 226, .8f, .4f}, {602, 198, .9f, .4f}, {760, 250, .8f, .4f}, {1004, 170, 1, .5f}};
+    auto band = [&](float y0, float y1, ImU32 a, ImU32 b) {
+        dl->AddRectFilledMultiColor(A(0, y0), A(1280, y1), a, a, b, b);
+    };
+
+    // 1. Hisui Cosmic Night Sky Gradient
+    band(0, 260, IM_COL32(5, 11, 26, 255), IM_COL32(15, 34, 68, 255));
+    band(260, 480, IM_COL32(15, 34, 68, 255), IM_COL32(29, 63, 102, 255));
+    band(480, 720, IM_COL32(29, 63, 102, 255), IM_COL32(12, 25, 42, 255));
+
     float tw = (float)ImGui::GetTime();
-    for (int i = 0; i < 20; i++) {  // (a slow twinkle)
-        float a = stars[i][3] * (0.75f + 0.25f * sinf(tw * 1.3f + i * 1.7f));
-        dl->AddCircleFilled(A(stars[i][0], stars[i][1]), stars[i][2] * k * 1.2f, IM_COL32(223, 234, 240, (int)(a * 255)));
+
+    // 2. Space-Time Rift (A Fenda Espaço-Tempo) in upper Hisui sky (centred around X=880, Y=165)
+    // Pulsing ethereal cosmic nebula layers
+    float rift_pulse = 0.85f + 0.15f * sinf(tw * 1.4f);
+    for (int i = 0; i < 20; i++) {
+        float r = (360.0f - i * 16.0f) * k;
+        ImU32 col = (i < 8) ? IM_COL32(123, 44, 191, (int)(7 * rift_pulse))      // outer violet
+                  : (i < 14) ? IM_COL32(168, 85, 247, (int)(12 * rift_pulse))    // mid magenta-purple
+                             : IM_COL32(0, 255, 224, (int)(18 * rift_pulse));    // inner rift cyan glow
+        dl->AddCircleFilled(A(880, 165), r, col, 48);
     }
-    dl->AddCircleFilled(A(1060, 132), 38 * k, IM_COL32(244, 230, 191, 235), 48);  // crescent moon
-    dl->AddCircleFilled(A(1076, 120), 35 * k, IM_COL32(7, 19, 34, 255), 48);
-    dl->AddRectFilledMultiColor(A(874, 150), A(886, 670), IM_COL32(242, 181, 68, 0), IM_COL32(242, 181, 68, 0),
-                                IM_COL32(242, 181, 68, 60), IM_COL32(242, 181, 68, 60));  // the tower's light beam
-    static const short far_[][3] = {{0, 40, 452}, {40, 80, 420}, {80, 150, 462}, {150, 175, 404}, {175, 190, 382},
-                                    {190, 230, 404}, {230, 300, 470}, {300, 360, 432}, {360, 400, 410}, {400, 470, 482},
-                                    {470, 520, 396}, {520, 600, 440}, {600, 650, 416}, {650, 720, 470}, {720, 790, 432},
-                                    {790, 830, 406}, {830, 960, 462}, {960, 1000, 420}, {1000, 1070, 446},
-                                    {1070, 1110, 402}, {1110, 1180, 432}, {1180, 1240, 456}, {1240, 1280, 426}};
-    for (auto &b : far_) dl->AddRectFilled(A(b[0], b[2]), A(b[1], 720), IM_COL32(17, 48, 63, 255));
-    for (int i = 0; i < 16; i++)  // a warm glow over the city, low right
-        dl->AddCircleFilled(A(896, 640), (560 - i * 32) * k, IM_COL32(242, 181, 68, 5), 64);
-    ImVec2 tower[] = {A(866, 660), A(866, 340), A(872, 312), A(876, 236), A(880, 150), A(884, 236), A(888, 312),
-                      A(894, 340), A(894, 660)};
-    dl->AddConcavePolyFilled(tower, 9, IM_COL32(10, 31, 45, 255));
-    float ring_a = 0.75f + 0.25f * sinf(tw * 0.9f);
-    dl->AddEllipse(A(880, 300), ImVec2(30 * k, 6 * k), IM_COL32(242, 181, 68, (int)(215 * ring_a)), 0, 40, 2 * k);
-    dl->AddEllipse(A(880, 356), ImVec2(40 * k, 8 * k), IM_COL32(242, 181, 68, (int)(150 * ring_a)), 0, 40, 2 * k);
-    dl->AddEllipse(A(880, 420), ImVec2(50 * k, 10 * k), IM_COL32(242, 181, 68, (int)(100 * ring_a)), 0, 48, 2 * k);
-    dl->AddCircleFilled(A(880, 152), 4 * k, IM_COL32(255, 215, 122, 255));
-    static const short mid[][3] = {{0, 90, 520}, {95, 60, 470}, {160, 110, 545}, {275, 70, 500}, {340, 120, 560},
-                                   {465, 55, 455}, {525, 95, 530}, {625, 80, 495}, {710, 130, 560}, {935, 70, 480},
-                                   {1010, 110, 540}, {1125, 60, 465}, {1190, 90, 515}};
-    for (auto &b : mid) dl->AddRectFilled(A(b[0], b[2]), A(b[0] + b[1], 720), IM_COL32(10, 29, 43, 255));
-    static const short win[][3] = {{16, 540, 8}, {40, 540, 4}, {64, 560, 7}, {108, 490, 9}, {130, 510, 5}, {108, 530, 6},
-                                   {180, 565, 7}, {214, 565, 4}, {246, 585, 8}, {290, 520, 6}, {320, 540, 9},
-                                   {360, 580, 5}, {400, 580, 8}, {436, 600, 6}, {478, 475, 9}, {500, 500, 6},
-                                   {478, 525, 4}, {545, 550, 7}, {580, 570, 9}, {640, 515, 5}, {672, 535, 8},
-                                   {640, 555, 7}, {730, 580, 6}, {770, 580, 9}, {810, 600, 5}, {950, 500, 8},
-                                   {980, 520, 6}, {1030, 560, 9}, {1066, 580, 5}, {1096, 560, 7}, {1140, 485, 6},
-                                   {1164, 505, 9}, {1206, 535, 7}, {1244, 555, 5}};
-    for (auto &w : win) dl->AddRectFilled(A(w[0], w[1]), A(w[0] + 5, w[1] + 7), IM_COL32(242, 199, 102, w[2] * 26));
-    static const short near_[][3] = {{0, 120, 640}, {120, 210, 615}, {210, 330, 650}, {330, 470, 625}, {470, 600, 660},
-                                     {600, 760, 630}, {760, 900, 655}, {900, 1050, 620}, {1050, 1160, 645},
-                                     {1160, 1280, 610}};
-    for (auto &b : near_) dl->AddRectFilled(A(b[0], b[2]), A(b[1], 720), IM_COL32(4, 13, 22, 255));
-    for (int i = 0; i < 11; i++)
-        dl->AddCircleFilled(A(60 + i * 120.0f, i & 1 ? 696 : 690), 2 * k, IM_COL32(242, 181, 68, i & 1 ? 150 : 180));
+
+    // Space-Time Distortion Tendrils / Lightning fractures
+    auto rift_bolt = [&](float x0, float y0, float x1, float y1, float x2, float y2, ImU32 c, float w) {
+        ImVec2 pts[] = {A(x0, y0), A(x1, y1), A(x2, y2)};
+        dl->AddPolyline(pts, 3, c, 0, w * k);
+    };
+    float bolt_flicker = 0.7f + 0.3f * sinf(tw * 4.5f);
+    ImU32 c_bolt_cyan = IM_COL32(167, 243, 208, (int)(220 * bolt_flicker));
+    ImU32 c_bolt_purp = IM_COL32(192, 132, 252, (int)(190 * bolt_flicker));
+    ImU32 c_bolt_gold = IM_COL32(252, 211, 77, (int)(200 * bolt_flicker));
+    rift_bolt(880, 80, 870, 135, 880, 190, c_bolt_cyan, 2.5f);
+    rift_bolt(880, 190, 895, 240, 880, 280, c_bolt_cyan, 2.0f);
+    rift_bolt(870, 135, 830, 155, 800, 190, c_bolt_purp, 1.8f);
+    rift_bolt(880, 150, 930, 175, 960, 210, c_bolt_gold, 1.8f);
+
+    // Rift core dimensional fissure
+    dl->AddEllipseFilled(A(880, 165), ImVec2(8.0f * k, 38.0f * k), IM_COL32(255, 255, 255, 240), -0.15f, 24);
+    dl->AddEllipseFilled(A(880, 165), ImVec2(16.0f * k, 55.0f * k), IM_COL32(0, 255, 224, 180), -0.15f, 24);
+
+    // 3. Ancient Hisui Twinkling Stars
+    static const float stars[][4] = {
+        {64, 48, 1.2f, .8f}, {142, 110, .9f, .6f}, {230, 36, 1.4f, .9f}, {318, 88, .8f, .5f},
+        {402, 22, 1.1f, .7f}, {470, 140, .9f, .5f}, {556, 64, 1.3f, .8f}, {640, 30, .8f, .6f},
+        {712, 118, 1, .6f}, {760, 45, 1.3f, .8f}, {1030, 52, 1.4f, .9f}, {1120, 96, .9f, .5f},
+        {1180, 40, 1.2f, .8f}, {1240, 132, .9f, .6f}, {1112, 210, .8f, .5f}, {96, 190, 1, .5f},
+        {276, 226, .8f, .4f}, {602, 198, .9f, .4f}, {720, 250, .8f, .4f}, {1040, 240, 1, .5f}
+    };
+    for (int i = 0; i < 20; i++) {
+        float a = stars[i][3] * (0.75f + 0.25f * sinf(tw * 1.5f + i * 1.7f));
+        dl->AddCircleFilled(A(stars[i][0], stars[i][1]), stars[i][2] * k * 1.1f, IM_COL32(230, 242, 255, (int)(a * 255)));
+    }
+
+    // 4. Distant Mountain Range Silhouettes (Deep Hisuian Ridgelines)
+    ImVec2 far_ridge[] = {
+        A(0, 520), A(120, 460), A(250, 485), A(380, 430), A(510, 470),
+        A(640, 410), A(780, 450), A(920, 395), A(1060, 440), A(1180, 420), A(1280, 460),
+        A(1280, 720), A(0, 720)
+    };
+    dl->AddConcavePolyFilled(far_ridge, 13, IM_COL32(20, 42, 68, 255));
+
+    // 5. Mount Coronet (Monte Coronet) - Majestic Summit below the Space-Time Rift!
+    // Base mountain shadow body
+    ImVec2 coronet_body[] = {
+        A(650, 680), A(730, 510), A(800, 430), A(845, 340), A(880, 240),
+        A(915, 340), A(960, 440), A(1030, 530), A(1120, 680)
+    };
+    dl->AddConcavePolyFilled(coronet_body, 9, IM_COL32(18, 30, 48, 255));
+
+    // Mount Coronet Snow-capped Summit & Ridges
+    ImVec2 coronet_snow[] = {
+        A(845, 340), A(880, 240), A(915, 340), A(895, 380), A(880, 360), A(865, 385)
+    };
+    dl->AddConcavePolyFilled(coronet_snow, 6, IM_COL32(226, 234, 248, 230));
+
+    // Mountain rock facets & snow couloirs
+    dl->AddLine(A(880, 240), A(880, 460), IM_COL32(148, 163, 184, 120), 1.8f * k);
+    dl->AddLine(A(880, 360), A(840, 440), IM_COL32(203, 213, 225, 90), 1.5f * k);
+    dl->AddLine(A(880, 360), A(920, 440), IM_COL32(100, 116, 139, 120), 1.5f * k);
+
+    // 6. Mid-ground Rugged Foothills & Obsidian Fieldlands Slopes
+    ImVec2 mid_ridge[] = {
+        A(0, 610), A(140, 560), A(310, 590), A(460, 530), A(620, 570),
+        A(760, 520), A(900, 560), A(1050, 520), A(1200, 570), A(1280, 540),
+        A(1280, 720), A(0, 720)
+    };
+    dl->AddConcavePolyFilled(mid_ridge, 12, IM_COL32(12, 22, 36, 255));
+
+    // 7. Feudal Cedar / Pine Tree Silhouettes (Sugi) along the mountain slopes
+    auto draw_pine = [&](float cx, float cy, float h) {
+        float hw = h * 0.38f;
+        ImVec2 t1[] = {A(cx, cy - h), A(cx + hw * 0.6f, cy - h * 0.55f), A(cx - hw * 0.6f, cy - h * 0.55f)};
+        ImVec2 t2[] = {A(cx, cy - h * 0.65f), A(cx + hw * 0.85f, cy - h * 0.25f), A(cx - hw * 0.85f, cy - h * 0.25f)};
+        ImVec2 t3[] = {A(cx, cy - h * 0.35f), A(cx + hw, cy), A(cx - hw, cy)};
+        ImU32 c_pine = IM_COL32(6, 14, 22, 255);
+        dl->AddTriangleFilled(t1[0], t1[1], t1[2], c_pine);
+        dl->AddTriangleFilled(t2[0], t2[1], t2[2], c_pine);
+        dl->AddTriangleFilled(t3[0], t3[1], t3[2], c_pine);
+        dl->AddLine(A(cx, cy), A(cx, cy + h * 0.12f), c_pine, 2.0f * k);
+    };
+
+    static const float pines[][3] = {
+        {60, 600, 36}, {110, 575, 42}, {160, 585, 30}, {220, 605, 34},
+        {380, 550, 40}, {430, 540, 48}, {480, 555, 35}, {590, 580, 38},
+        {680, 545, 44}, {730, 535, 50}, {960, 565, 42}, {1010, 550, 46},
+        {1140, 570, 38}, {1230, 560, 44}
+    };
+    for (auto &p : pines) draw_pine(p[0], p[1], p[2]);
+
+    // 8. Near Foreground Ridge
+    ImVec2 near_ridge[] = {
+        A(0, 670), A(180, 645), A(380, 665), A(580, 635), A(780, 660),
+        A(980, 635), A(1150, 655), A(1280, 640), A(1280, 720), A(0, 720)
+    };
+    dl->AddConcavePolyFilled(near_ridge, 10, IM_COL32(5, 10, 16, 255));
+
+    // 9. Feudal Stone Lanterns (Tōrō) with warm amber flame glow in foreground
+    auto draw_lantern = [&](float lx, float ly, float s) {
+        float sw = s * 0.5f;
+        ImU32 c_stone = IM_COL32(18, 22, 28, 255);
+        // Roof cap
+        ImVec2 roof[] = {A(lx, ly - s), A(lx + sw * 1.3f, ly - s * 0.65f), A(lx - sw * 1.3f, ly - s * 0.65f)};
+        dl->AddTriangleFilled(roof[0], roof[1], roof[2], c_stone);
+        // Light chamber & fire
+        float glow_a = 0.75f + 0.25f * sinf(tw * 2.8f + lx);
+        for (int i = 0; i < 8; i++) {
+            dl->AddCircleFilled(A(lx, ly - s * 0.45f), (18.0f - i * 2.0f) * k,
+                                IM_COL32(245, 158, 11, (int)(18 * glow_a)), 24);
+        }
+        dl->AddRectFilled(A(lx - sw * 0.5f, ly - s * 0.6f), A(lx + sw * 0.5f, ly - s * 0.3f),
+                          IM_COL32(254, 240, 138, (int)(230 * glow_a)));
+        // Stone post & pedestal
+        dl->AddRectFilled(A(lx - sw * 0.25f, ly - s * 0.3f), A(lx + sw * 0.25f, ly), c_stone);
+        dl->AddRectFilled(A(lx - sw * 0.7f, ly), A(lx + sw * 0.7f, ly + s * 0.18f), c_stone);
+    };
+
+    draw_lantern(140, 665, 28);
+    draw_lantern(520, 655, 26);
+    draw_lantern(880, 650, 30);
+    draw_lantern(1180, 660, 28);
+
+    // Warm atmospheric amber mist on the Hisui ground level
+    dl->AddRectFilledMultiColor(A(0, 660), A(1280, 720),
+                                IM_COL32(245, 158, 11, 0), IM_COL32(245, 158, 11, 0),
+                                IM_COL32(245, 158, 11, 22), IM_COL32(245, 158, 11, 22));
 }
 
-// ---- first PLAY ever: the aspect ratio question, then how to open the in-game menu
 static bool g_tip_test;  // (LARECOMP_LAUNCHER_SHOT=<frame>:tip / :aspect)
 static bool g_video_test;  // (LARECOMP_LAUNCHER_SHOT=<frame>:video - the recommended video settings question)
 static bool begin_question(const char *id, float s) {
@@ -1761,8 +1875,8 @@ static bool menu_tip(float s) {
         static const char *const pad[] = {"Minus + Plus", "View + Menu", "Create + Options"};
         int fam = bind_label_family() % 3;
         ImGui::PushTextWrapPos(0);
-        ImGui::TextUnformatted(TR("ZA Recomp has its own menu for settings: F1 (or Minus+Plus on a controller).",
-                                  "O ZA Recomp tem um menu próprio de configurações: F1 (ou Menos+Mais no controle)."));
+        ImGui::TextUnformatted(TR("PokeL-ARecomp has its own menu for settings: F1 (or Minus+Plus on a controller).",
+                                  "O PokeL-ARecomp tem um menu próprio de configurações: F1 (ou Menos+Mais no controle)."));
         ImGui::Spacing();
         if (g_pt) ImGui::Text("Abra no jogo com F1 ou Esc, ou no controle com o %s (ou %s juntos).", home_pt[fam], pad[fam]);
         else ImGui::Text("Open it in game with F1 or Esc, or on a controller with the %s (or %s together).", home_en[fam], pad[fam]);
@@ -1875,8 +1989,8 @@ static void prelaunch_tab(float sc) {
         ImGui::PushFont(g_font_menu);
         ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "%s", TR("Are you sure?", "Tem certeza?"));
         ImGui::PopFont();
-        ImGui::Text(TR("This deletes ZA Recomp's copy of the game files (%.1f GB).",
-                       "Isso apaga a cópia dos arquivos do jogo do ZA Recomp (%.1f GB)."), gb);
+        ImGui::Text(TR("This deletes PokeL-ARecomp's copy of the game files (%.1f GB).",
+                       "Isso apaga a cópia dos arquivos do jogo do PokeL-ARecomp (%.1f GB)."), gb);
         ImGui::TextDisabled("%s", TR("Saves, mods and settings are kept. Your own game files aren't touched.",
                                      "Saves, mods e configurações ficam. Os seus próprios arquivos do jogo não são tocados."));
         if (rt_dev_mode()) {  // (a source checkout: the files are the project's own extracted/)
@@ -1887,7 +2001,7 @@ static void prelaunch_tab(float sc) {
         ImGui::Spacing();
         if (ImGui::Button(TR("Delete", "Apagar"), ImVec2(220 * sc, 0))) {
             bool ok = rt_remove_game_files(g_root.c_str());  // (runtime/paths.c: only what the extraction made)
-            set_job(ok ? "Game files deleted." : "Could not delete the game files (not in ZA Recomp's data folder?).", !ok);
+            set_job(ok ? "Game files deleted." : "Could not delete the game files (not in PokeL-ARecomp's data folder?).", !ok);
             g_files_deleted = true, gb = -1;
             ImGui::CloseCurrentPopup();
         }
@@ -2498,7 +2612,7 @@ extern "C" void launcher_run(const char *root) {
             dl->AddRectFilled(P(0, 0), P(W_, 64), IM_COL32(4, 10, 19, 150));
             dl->AddLine(P(0, 64), P(W_, 64), IM_COL32(255, 255, 255, 18), 1.2f * g_s);
             logo(dl, 26, 17, 30);
-            float lx = 64 + text(dl, F_H2, 20, 64, 32 - text_size(F_H2, 20, "PLA RECOMP").y / 2, C_TEXT, "PLA RECOMP").x;
+            float lx = 64 + text(dl, F_H2, 20, 64, 32 - text_size(F_H2, 20, "POKEL-RECOMP").y / 2, C_TEXT, "POKEL-RECOMP").x;
             text(dl, F_SMALL, 13, lx + 8, 32 - text_size(F_SMALL, 13, "v").y / 2 + 1, C_MUTED, LARECOMP_VERSION);
             const char *tab_names[N_TABS] = {TR("Play", "Jogar"), TR("Mods", "Mods"), TR("Saves", "Saves"),
                                              TR("Settings", "Configurações"), TR("About", "Sobre")};
@@ -2630,7 +2744,7 @@ extern "C" void launcher_run(const char *root) {
                                rebuild ? TR("The game code needs a rebuild", "O código do jogo precisa ser recompilado")
                                        : TR("Let's set the game up", "Vamos preparar o jogo"));
                     const char *what = rebuild
-                        ? TR("This version of ZA Recomp builds the game's code a little differently. Your game files "
+                        ? TR("This version of PokeL-ARecomp builds the game's code a little differently. Your game files "
                              "are already here: only the code is compiled again (a few minutes).",
                              "Esta versão do PokeL-ARecomp compila o código do jogo de um jeito um pouco diferente. Os seus "
                              "arquivos do jogo já estão aqui: só o código é compilado de novo (alguns minutos).")
@@ -2905,7 +3019,7 @@ extern "C" void launcher_run(const char *root) {
                 static const SDL_DialogFileFilter zip_f[] = {{"Zip", "zip"}};
                 if (button("##export", TR("Export (.zip)", "Exportar (.zip)"), bx, ly, 0, 46, BTN_SECONDARY, g_save_time != 0,
                            IC_DOWN_ARROW))
-                    SDL_ShowSaveFileDialog(picked_export, NULL, win, zip_f, 1, "ZA Recomp save.zip");
+                    SDL_ShowSaveFileDialog(picked_export, NULL, win, zip_f, 1, "PokeL-ARecomp save.zip");
                 bx += ImGui::GetItemRectSize().x / g_s + 10;
                 if (button("##opensave", TR("Open folder", "Abrir pasta"), bx, ly, 0, 46, BTN_SECONDARY, true, IC_FOLDER)) {
                     mkdir("save", 0755);
@@ -2977,7 +3091,7 @@ extern "C" void launcher_run(const char *root) {
                     ImGui::Dummy(ImVec2(1, 0));
                 }
                 ImGui::EndChild();
-                bar = {C_TEAL, TR("Saves live in the save folder next to ZA Recomp", "Os saves ficam na pasta save, ao lado do ZA Recomp")};
+                bar = {C_TEAL, TR("Saves live in the save folder next to PokeL-ARecomp", "Os saves ficam na pasta save, ao lado do PokeL-ARecomp")};
                 if (back_key) g_tab = TAB_PLAY, g_focus_play = true;
             }
 
@@ -3144,12 +3258,12 @@ extern "C" void launcher_run(const char *root) {
                                                                                  tag_label(upd, false) + "?").c_str());
                             ImGui::PopFont();
                             if (upd_size > 0)
-                                ImGui::Text(TR("ZA Recomp downloads it (%.0f MB) from GitHub, replaces its program files and opens again.",
-                                               "O ZA Recomp baixa a versão nova (%.0f MB) do GitHub, troca os arquivos do programa e abre de novo."),
+                                ImGui::Text(TR("PokeL-ARecomp downloads it (%.0f MB) from GitHub, replaces its program files and opens again.",
+                                               "O PokeL-ARecomp baixa a versão nova (%.0f MB) do GitHub, troca os arquivos do programa e abre de novo."),
                                             upd_size / 1e6);
                             else
-                                ImGui::Text("%s", TR("ZA Recomp downloads it from GitHub, replaces its program files and opens again.",
-                                                     "O ZA Recomp baixa a versão nova do GitHub, troca os arquivos do programa e abre de novo."));
+                                ImGui::Text("%s", TR("PokeL-ARecomp downloads it from GitHub, replaces its program files and opens again.",
+                                                     "O PokeL-ARecomp baixa a versão nova do GitHub, troca os arquivos do programa e abre de novo."));
                             ImGui::TextDisabled("%s", TR("Saves, mods, settings and the compiled game are kept as they are.",
                                                          "Saves, mods, configurações e o jogo já compilado ficam como estão."));
                             ImGui::Spacing();
