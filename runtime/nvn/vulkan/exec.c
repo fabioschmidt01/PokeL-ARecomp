@@ -2768,6 +2768,7 @@ static void pipe_key_fill(PipeKey *k, Prog *pr, const PipeIn *in, const VkFormat
 // A pipeline's create info from its key (the structures point into each other and into the key: filled in place)
 typedef struct {
     VkPipelineShaderStageCreateInfo stages[2];
+    VkPipelineShaderStageRequiredSubgroupSizeCreateInfo req32_fs;
     VkVertexInputAttributeDescription va[32];
     VkVertexInputBindingDescription vb[17];
     VkVertexInputBindingDivisorDescriptionEXT vd[17];
@@ -2786,12 +2787,35 @@ typedef struct {
     VkGraphicsPipelineCreateInfo pi;
 } PipeCI;
 
+static bool fs_subgroup32(void) {
+    static int ok = -1;
+    if (ok < 0) {
+        const char *e = ENV("LARECOMP_VK_FS_SUBGROUP");
+        ok = 0;
+        if (g_vkc.api >= VK_API_VERSION_1_3 && !(e && !strcmp(e, "0"))) {
+            VkPhysicalDeviceSubgroupSizeControlProperties sgp = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES};
+            VkPhysicalDeviceProperties2 pp = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &sgp};
+            vkGetPhysicalDeviceProperties2(g_vk.phys, &pp);
+            ok = sgp.minSubgroupSize <= 32 && sgp.maxSubgroupSize >= 32 && (sgp.requiredSubgroupSizeStages & VK_SHADER_STAGE_FRAGMENT_BIT);
+            LOG("[vk] fragment subgroup sizes %u..%u: %s\n", sgp.minSubgroupSize, sgp.maxSubgroupSize, ok ? "fragment shaders run in 32 lanes (Intel/AMD warp alignment)" : "left to the driver");
+        }
+    }
+    return ok;
+}
+
 static void pipe_ci_fill(PipeCI *c, const PipeKey *k) {
     memset(c, 0, sizeof *c);
     c->stages[0] = (VkPipelineShaderStageCreateInfo){.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = VK_SHADER_STAGE_VERTEX_BIT, .module = k->prog->vs, .pName = "main"};
     c->stages[1] = (VkPipelineShaderStageCreateInfo){.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = k->a2c && k->prog->fs_late ? k->prog->fs_late : k->prog->fs, .pName = "main"};
+    if (fs_subgroup32()) {
+        c->req32_fs = (VkPipelineShaderStageRequiredSubgroupSizeCreateInfo){
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO,
+            .requiredSubgroupSize = 32
+        };
+        c->stages[1].pNext = &c->req32_fs;
+    }
     uint32_t na = 0, nb = 0, nd = 0;
     for (int i = 0; i < 32; i++)
         if (k->attr_mask & (1u << i)) c->va[na++] = (VkVertexInputAttributeDescription){(uint32_t)i, k->attr_bind[i], k->attr_fmt[i], k->attr_off[i]};

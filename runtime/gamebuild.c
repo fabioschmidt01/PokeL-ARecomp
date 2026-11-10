@@ -141,7 +141,8 @@ static bool find_tools(Tools *t) {
     if (b > s) s = b;
     if (s) *s = 0;
 #ifdef _WIN32
-    if (!rt_resource("lasrecomp.dll.a", "build/lasrecomp.dll.a", t->implib, sizeof t->implib)) return false;
+    if (!rt_resource("PokeL-ARecomp.dll.a", "build/PokeL-ARecomp.dll.a", t->implib, sizeof t->implib) &&
+        !rt_resource("lasrecomp.dll.a", "build/lasrecomp.dll.a", t->implib, sizeof t->implib)) return false;
     t->zig_rt[0] = 0;
     // (zig/rt-v2: the same runtime built for x86-64-v2, for gamelib_old_cpu)
     const char *rsp = gamelib_old_cpu() ? "zig" SEP "rt-v2" SEP "link.rsp" : "zig" SEP "rt" SEP "link.rsp";

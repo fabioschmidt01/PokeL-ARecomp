@@ -72,11 +72,10 @@ void hle_override(uint64_t addr, HostFn fn, const char *name) {
     override_count++;
 }
 
-static __thread uint64_t unimpl_pc;
 static int unimpl_counts[MAX_HLE];
 static void hle_unimplemented(Cpu *c) {
-    int i = (int)((unimpl_pc - HLE_BASE) / 16);
-    if (unimpl_counts[i]++ < 3)
+    int i = (int)((c->pc - HLE_BASE) / 16);
+    if (i >= 0 && i < hle_count && unimpl_counts[i]++ < 3)
         LOG("[hle] UNIMPLEMENTED %s (x0=%llx x1=%llx lr=%llx) -> returning 0\n", hle_slots[i].name, c->x[0],
             c->x[1], c->x[30]);
     c->x[0] = 0;
@@ -138,23 +137,16 @@ GuestFn dispatch_lookup(uint64_t addr) {
     return NULL;
 }
 
-// Small direct-mapped cache in front of the binary search
-#define DCACHE 4096
-static __thread struct { uint64_t addr; GuestFn fn; } dcache[DCACHE];
-
-// Guest setjmp sites of this thread (cpu.h RtJmp): one per guest jmp_buf; dead stack frames (sp < c->sp) are reclaimed first
-#define NJMP 256
-static __thread RtJmp jmps[NJMP];
-static __thread unsigned jmp_next;
+// Direct-mapped cache and setjmp sites are stored on struct Cpu (cpu.h) to eliminate TLS overhead and prevent TLS crashes.
 RtJmp *rt_setjmp_site(Cpu *c, uint64_t ret) {
     RtJmp *j = NULL;
     for (int i = 0; i < NJMP; i++) {
-        if (jmps[i].buf && jmps[i].sp < c->sp) jmps[i].buf = 0;  // frame below current SP already returned
-        if (!j && (jmps[i].buf == c->x[0] || (jmps[i].buf && jmps[i].ret == ret && jmps[i].sp == c->sp))) j = &jmps[i];
+        if (c->jmps[i].buf && c->jmps[i].sp < c->sp) c->jmps[i].buf = 0;  // frame below current SP already returned
+        if (!j && (c->jmps[i].buf == c->x[0] || (c->jmps[i].buf && c->jmps[i].ret == ret && c->jmps[i].sp == c->sp))) j = &c->jmps[i];
     }
     for (int i = 0; i < NJMP && !j; i++)
-        if (!jmps[i].buf) j = &jmps[i];
-    if (!j) j = &jmps[jmp_next++ % NJMP];
+        if (!c->jmps[i].buf) j = &c->jmps[i];
+    if (!j) j = &c->jmps[c->jmp_next++ % NJMP];
     j->buf = c->x[0], j->ret = ret, j->sp = c->sp;
     return j;
 }
@@ -166,7 +158,6 @@ __attribute__((noinline)) static GuestFn dispatch_slow(Cpu *c) {
         int i = (int)((pc - HLE_BASE) / 16);
         if (i < hle_count) {
             if (hle_slots[i].fn) return hle_slots[i].fn;
-            unimpl_pc = pc;
             return hle_unimplemented;
         }
     }
@@ -175,16 +166,16 @@ __attribute__((noinline)) static GuestFn dispatch_slow(Cpu *c) {
     GuestFn f = dispatch_lookup(pc);
     if (!f) {
         for (int i = 0; i < NJMP; i++)  // a guest longjmp returning to its setjmp (exact SP match first)
-            if (jmps[i].buf && jmps[i].ret == pc && jmps[i].sp == c->sp) longjmp(jmps[i].host, 1);
+            if (c->jmps[i].buf && c->jmps[i].ret == pc && c->jmps[i].sp == c->sp) longjmp(c->jmps[i].host, 1);
         for (int i = 0; i < NJMP; i++)  // fallback: match return PC if SP was adjusted
-            if (jmps[i].buf && jmps[i].ret == pc) longjmp(jmps[i].host, 1);
+            if (c->jmps[i].buf && c->jmps[i].ret == pc) longjmp(c->jmps[i].host, 1);
         uint64_t off;
         const char *s = loader_symbol_at(c->x[30], &off);
         FATAL("no function at %llx (lr=%llx %s+%llx)\n", pc, c->x[30], s ? s : "?", off);
     }
     unsigned h = (unsigned)(pc >> 2) & (DCACHE - 1);
-    dcache[h].addr = pc;
-    dcache[h].fn = f;
+    c->dcache[h].addr = pc;
+    c->dcache[h].fn = f;
     return f;
 }
 
@@ -199,8 +190,8 @@ __attribute__((noinline)) static void dispatch_miss(Cpu *c) {
 // Always tail-calls, so chains of indirect jumps don't grow the host stack.
 void rt_dispatch(Cpu *c) {
     unsigned h = (unsigned)(c->pc >> 2) & (DCACHE - 1);
-    if (__builtin_expect(dcache[h].addr == c->pc, 1)) {
-        GuestFn f = dcache[h].fn;
+    if (__builtin_expect(c->dcache[h].addr == c->pc, 1)) {
+        GuestFn f = c->dcache[h].fn;
         __attribute__((musttail)) return f(c);
     }
     __attribute__((musttail)) return dispatch_miss(c);
@@ -222,7 +213,8 @@ static int cmp_host(const void *a, const void *b) {
 const char *rt_host_fn_name(uint64_t pc, uint64_t *offset) {
     static uint64_t (*byhost)[2];  // {host address, guest address}, sorted by host address
     static uint64_t n;
-    static __thread char name[32];
+    static char name[4][32];
+    static int name_idx;
     if (!byhost) {
         uint64_t total = 0, k = 0;
         for (int t = 0; t < ntables; t++) total += tables[t].count;
@@ -244,9 +236,10 @@ const char *rt_host_fn_name(uint64_t pc, uint64_t *offset) {
         else hi = mid;
     }
     if (!lo || pc - byhost[lo - 1][0] > 0x100000) return NULL;
-    snprintf(name, sizeof name, "f_%llx", (unsigned long long)byhost[lo - 1][1]);
+    char *buf = name[(name_idx++) & 3];
+    snprintf(buf, sizeof(name[0]), "f_%llx", (unsigned long long)byhost[lo - 1][1]);
     if (offset) *offset = pc - byhost[lo - 1][0];
-    return name;
+    return buf;
 }
 
 static const char *host_sym(uint64_t pc, uint64_t *offset) {

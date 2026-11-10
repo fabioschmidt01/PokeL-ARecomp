@@ -5,6 +5,21 @@
 #include <stdint.h>
 #include <string.h>
 
+struct Cpu;
+typedef void (*GuestFn)(struct Cpu *);
+
+// Guest setjmp / longjmp (runtime/dispatch.c): at a call of the guest's setjmp the recompiled caller takes a host
+// setjmp too; the guest longjmp's final `br x30` to that return address (with that sp) lands back there.
+typedef struct RtJmp { jmp_buf host; uint64_t buf, ret, sp; } RtJmp;
+
+#define DCACHE 4096
+#define NJMP 256
+
+typedef struct DispatchCacheEntry {
+    uint64_t addr;
+    GuestFn fn;
+} DispatchCacheEntry;
+
 typedef struct __attribute__((aligned(16))) Cpu {
     uint64_t x[32];          // x0-x30 (x[31] unused; sp is separate)
     uint64_t sp;             // 256
@@ -20,6 +35,10 @@ typedef struct __attribute__((aligned(16))) Cpu {
     uint64_t excl_val2;      // 336: high half of an LDXP/LDAXP pair
     uint8_t _pad[512 - 344];
     __uint128_t v[32];       // 512
+    // Thread-local dispatch cache and setjmp tracking (stored on Cpu to eliminate Windows TLS overhead/crashes)
+    DispatchCacheEntry dcache[DCACHE];
+    RtJmp jmps[NJMP];
+    unsigned jmp_next;
 } Cpu;
 
 _Static_assert(offsetof(Cpu, sp) == 256, "sp");
@@ -28,14 +47,10 @@ _Static_assert(offsetof(Cpu, nzcv) == 272, "nzcv");
 _Static_assert(offsetof(Cpu, fpcr) == 320, "fpcr");
 _Static_assert(offsetof(Cpu, fpsr) == 328, "fpsr");
 _Static_assert(offsetof(Cpu, v) == 512, "v");
-
-typedef void (*GuestFn)(Cpu *);
+_Static_assert(offsetof(Cpu, dcache) == 1024, "dcache");
 
 // ---- runtime services (runtime/*.c)
 void rt_dispatch(Cpu *c);                 // call function at c->pc
-// Guest setjmp / longjmp (runtime/dispatch.c): at a call of the guest's setjmp the recompiled caller takes a host
-// setjmp too; the guest longjmp's final `br x30` to that return address (with that sp) lands back there.
-typedef struct RtJmp { jmp_buf host; uint64_t buf, ret, sp; } RtJmp;
 RtJmp *rt_setjmp_site(Cpu *c, uint64_t ret);
 // hook site (tools/patches.py HOOKS, runtime/hle/hooks.c): 0 = run the instruction, 1 = the hook did it all,
 // 2.. = jump to the site's first.. target

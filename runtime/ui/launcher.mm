@@ -103,7 +103,7 @@ static const char *build_version(const uint8_t id[8]) {
 static bool build_is_za(const uint8_t id[8]) { return build_version(id) && memcmp(id, BUILD_ID, 8); }
 // The release tag this build is (also names the release files; Makefile / tools/bundle_macos.sh / make_dmg.sh read
 // it): PokeL-ARecomp's v<major>.<minor>.<patch>.
-#define LARECOMP_VERSION "v0.0.22"
+#define LARECOMP_VERSION "v0.0.23"
 extern "C" const char *rt_version(void) { return LARECOMP_VERSION; }  // (runtime/main.c: the log's first line)
 extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }  // (the shader caches' tag)
 
@@ -271,7 +271,7 @@ static void *upd_thread(void *) {
         if (!p || plat_proc_wait(p, true) != 0) return upd_fail("the zip couldn't be unpacked"), (void *)NULL;
     }
     fs::path src = u8p(work) / u8p("ZA Recomp");
-    if (!fs::exists(src / "lasrecomp.exe")) return upd_fail("the zip isn't a ZA Recomp release"), (void *)NULL;
+    if (!fs::exists(src / "PokeL-ARecomp.exe") && !fs::exists(src / "lasrecomp.exe")) return upd_fail("the zip isn't a PokeL-ARecomp release"), (void *)NULL;
     g_upd_state = UPD_INSTALL;
     // every file first: a half-moved update would mix two versions - moves only once the list is complete
     std::vector<fs::path> files;
