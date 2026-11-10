@@ -305,8 +305,11 @@ static KThread *thread_new(uint64_t entry, uint64_t arg, uint64_t stack_top, int
     pthread_mutex_lock(&g_klock);  // (threads create threads at once: two must never get the same id / TLS)
     t->id = next_thread_id++;
     t->tlr = tls_next;
-    tls_next += 0x200;
+    tls_next += 0x1000;
+    memset((void *)(uintptr_t)t->tlr, 0, 0x1000);
     t->cpu.tpidrro = t->tlr;
+    t->cpu.tpidr = t->tlr + 0x200;
+    *(uint64_t *)(uintptr_t)(t->tlr + 0x1f0) = t->cpu.tpidr;
     t->anext = g_threads;
     g_threads = t;
     pthread_mutex_unlock(&g_klock);
