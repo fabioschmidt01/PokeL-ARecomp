@@ -52,7 +52,7 @@ class Module:
         self.cache = {}
         self.stats = Counter()
         self.mu = None
-        self.setjmp_stubs = self._import_stubs({'setjmp', '_setjmp'})
+        self.setjmp_stubs = self._import_stubs({'setjmp', '_setjmp', '__setjmp'})
 
     def _import_stubs(self, names):
         """PLT stubs (adrp x16; ldr x17, [x16, #o]; add x16, x16, #o; br x17) whose GOT slot imports one of names."""

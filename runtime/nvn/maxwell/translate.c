@@ -854,17 +854,18 @@ static void emit_atom(Ctx *c, uint64_t w, bool red) {
     bool wide = bits(w, 48, 1);
     int size = (int)(red ? bits(w, 20, 3) : bits(w, 49, 3)), op = (int)(red ? bits(w, 23, 3) : bits(w, 52, 4));
     if (!c->glsl) { fail(c, "atom (msl)"); return; }
-    if (size > 1) { fail(c, "atom size %d", size); return; }
+    if (size > 2) { fail(c, "atom size %d", size); return; }
     if (op > 8) { fail(c, "atom op %d", op); return; }
     c->info->uses_gmem = true;
     c->uses_gmem_store = true;
     c->info->uses_gmem_store = true;
-    char addr[256], v[16];
+    char addr[256], v[16], vh[16];
     if (a == RZ) sprintf(addr, "ulong(%lld)", (long long)off);
     else if (wide) sprintf(addr, "((ulong(%s) << 32 | ulong(%s)) + ulong(%lld))", R(a + 1), R(a), (long long)off);
     else sprintf(addr, "(ulong(%s) + ulong(%lld))", R(a), (long long)off);
     strcpy(v, R(b));
-    sp(&c->body, "    { ulong ga = %s - 0x%llxul; bool ok = ga < 0x%llxul; uint old = 0u;\n", addr,
+    strcpy(vh, size == 2 ? R(b + 1) : "0u");
+    sp(&c->body, "    { ulong ga = %s - 0x%llxul; bool ok = ga < 0x%llxul; uint old = 0u, old_hi = 0u;\n", addr,
        (unsigned long long)maxwell_gmem_base, (unsigned long long)maxwell_gmem_size);
     bool fast = c->stage == STAGE_COMPUTE;
     if (fast) {
@@ -878,10 +879,20 @@ static void emit_atom(Ctx *c, uint64_t w, bool red) {
     const bool lazy = maxwell_gmem_chunk_shift && maxwell_gmem_lazy;  // (chunks imported lazily: no gmem_ buffer, the GMA_ functions)
     for (int k = 0; k < (fast ? 2 : 1); k++) {
         const char *m = fast && k == 0 ? "gfast_.w[fw]" : "gmem_.w[uint(ga >> 2)]";
+        const char *m_hi = fast && k == 0 ? "gfast_.w[fw + 1u]" : "gmem_.w[uint(ga >> 2) + 1u]";
         const char *guard = fast && k == 0 ? "if (fw != 0xFFFFFFFFu)" : fast ? "else if (ok)" : "if (ok)";
         const bool chunked = lazy && !(fast && k == 0);
         if (chunked && direct[op] && !(sgn && (op == 1 || op == 2))) {
-            sp(&c->body, "      %s old = %s(uint(ga >> 2), %s);\n", guard, gma[op], v);
+            if (size == 2) {
+                const char *hi_expr = op == 0 ? "(uint(%s) + ((old + uint(%s) < old) ? 1u : 0u))" : "uint(%s)";
+                char hi_val[128];
+                if (op == 0) snprintf(hi_val, sizeof hi_val, hi_expr, vh, v);
+                else snprintf(hi_val, sizeof hi_val, hi_expr, vh);
+                sp(&c->body, "      %s { old = %s(uint(ga >> 2), %s); old_hi = %s(uint(ga >> 2) + 1u, %s); }\n",
+                   guard, gma[op], v, gma[op], hi_val);
+            } else {
+                sp(&c->body, "      %s old = %s(uint(ga >> 2), %s);\n", guard, gma[op], v);
+            }
         } else if (chunked) {
             char nv[300];
             if (op == 1) sprintf(nv, "uint(min(int(o_), int(%s)))", v);
@@ -891,7 +902,15 @@ static void emit_atom(Ctx *c, uint64_t w, bool red) {
             sp(&c->body, "      %s { uint o_ = GMR(uint(ga >> 2)); for (;;) { uint r_ = GMCAS(uint(ga >> 2), o_, %s); if (r_ == o_) break; "
                "o_ = r_; } old = o_; }\n", guard, nv);
         } else if (direct[op] && !(sgn && (op == 1 || op == 2))) {
-            sp(&c->body, "      %s old = %s(%s, %s);\n", guard, direct[op], m, v);
+            if (size == 2) {
+                char hi_val[128];
+                if (op == 0) snprintf(hi_val, sizeof hi_val, "(uint(%s) + ((old + uint(%s) < old) ? 1u : 0u))", vh, v);
+                else snprintf(hi_val, sizeof hi_val, "uint(%s)", vh);
+                sp(&c->body, "      %s { old = %s(%s, %s); old_hi = %s(%s, %s); }\n",
+                   guard, direct[op], m, v, direct[op], m_hi, hi_val);
+            } else {
+                sp(&c->body, "      %s old = %s(%s, %s);\n", guard, direct[op], m, v);
+            }
         } else {
             char nv[300];
             if (op == 1) sprintf(nv, "uint(min(int(o_), int(%s)))", v);
@@ -902,7 +921,14 @@ static void emit_atom(Ctx *c, uint64_t w, bool red) {
                "old = o_; }\n", guard, m, m, nv);
         }
     }
-    if (d != RZ) { c->reg_used[d] = 1; sp(&c->body, "      r%d = old;\n", d); }
+    if (d != RZ) {
+        c->reg_used[d] = 1;
+        sp(&c->body, "      r%d = old;\n", d);
+        if (size == 2 && d + 1 < RZ) {
+            c->reg_used[d + 1] = 1;
+            sp(&c->body, "      r%d = old_hi;\n", d + 1);
+        }
+    }
     sp(&c->body, "    }\n");
 }
 

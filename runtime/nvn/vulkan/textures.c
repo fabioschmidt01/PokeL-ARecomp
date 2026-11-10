@@ -962,10 +962,11 @@ static int unpack_threads(void) {
     if (n < 0) {
         const char *e = ENV("LARECOMP_TEX_UNPACK_THREADS");
         int cores = plat_cpu_count() > 0 ? plat_cpu_count() : SDL_GetNumLogicalCPUCores();
-        // Scaled for multi-core workstations (e.g. Intel Xeon 16-24+ threads, Ryzen 9):
-        int max_t = cores >= 24 ? 10 : (cores >= 16 ? 8 : 6);
+        // Scaled for multi-core workstations (Intel Xeon 24+ threads -> 10, 16+ -> 8, 8-thread Ryzen 3 PRO 4350G -> 4):
+        int max_t = cores >= 24 ? 10 : (cores >= 16 ? 8 : (cores >= 8 ? 4 : 3));
         n = e ? atoi(e) : (cores / 2 < max_t ? cores / 2 : max_t);
         if (n < 0) n = 0;
+        LOG("[tex] texture unpack pool: %d worker threads (%d logical CPU threads detected)\n", n, cores);
     }
     return n;
 }

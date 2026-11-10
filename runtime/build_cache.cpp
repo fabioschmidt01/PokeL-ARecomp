@@ -2,7 +2,9 @@
 // Generated source and logs survive interruption, but are removed after successful publication.
 #include "build_cache.h"
 #include "cache_sha256.h"
+#include <SDL3/SDL_cpuinfo.h>
 #include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -366,6 +368,19 @@ extern "C" bool build_cache_publish(BuildCache *c, const char *name, const char 
         replace(tmp, lib);
         replace(c->root / "next-id", id);
         fs::remove(c->root / "install-journal");
+        {
+            std::ostringstream st;
+            int threads = SDL_GetNumLogicalCPUCores();
+            int ram_gb = (SDL_GetSystemRAM() + 512) / 1024;
+            st << "[recomp_state]\n"
+               << "locked = 1\n"
+               << "gamelib_id = " << runtime_id << "\n"
+               << "cpu_threads = " << threads << "\n"
+               << "ram_gb = " << ram_gb << "\n"
+               << "compiled_at = " << (long long)std::time(nullptr) << "\n";
+            std::error_code sec;
+            write(c->root.parent_path() / "recomp_state.ini", st.str());
+        }
         std::error_code ec;
         fs::remove(c->root / "previous-library", ec);
         fs::remove(c->root / "previous-id", ec);

@@ -142,13 +142,18 @@ GuestFn dispatch_lookup(uint64_t addr) {
 #define DCACHE 4096
 static __thread struct { uint64_t addr; GuestFn fn; } dcache[DCACHE];
 
-// Guest setjmp sites of this thread (cpu.h RtJmp): one per guest jmp_buf, the oldest replaced when full
-#define NJMP 32
+// Guest setjmp sites of this thread (cpu.h RtJmp): one per guest jmp_buf; dead stack frames (sp < c->sp) are reclaimed first
+#define NJMP 256
 static __thread RtJmp jmps[NJMP];
 static __thread unsigned jmp_next;
 RtJmp *rt_setjmp_site(Cpu *c, uint64_t ret) {
     RtJmp *j = NULL;
-    for (int i = 0; i < NJMP && !j; i++) if (jmps[i].buf == c->x[0]) j = &jmps[i];
+    for (int i = 0; i < NJMP; i++) {
+        if (jmps[i].buf && jmps[i].sp < c->sp) jmps[i].buf = 0;  // frame below current SP already returned
+        if (!j && (jmps[i].buf == c->x[0] || (jmps[i].buf && jmps[i].ret == ret && jmps[i].sp == c->sp))) j = &jmps[i];
+    }
+    for (int i = 0; i < NJMP && !j; i++)
+        if (!jmps[i].buf) j = &jmps[i];
     if (!j) j = &jmps[jmp_next++ % NJMP];
     j->buf = c->x[0], j->ret = ret, j->sp = c->sp;
     return j;
@@ -169,8 +174,10 @@ __attribute__((noinline)) static GuestFn dispatch_slow(Cpu *c) {
         if (overrides[i].addr == pc) return overrides[i].fn;
     GuestFn f = dispatch_lookup(pc);
     if (!f) {
-        for (int i = 0; i < NJMP; i++)  // a guest longjmp returning to its setjmp
+        for (int i = 0; i < NJMP; i++)  // a guest longjmp returning to its setjmp (exact SP match first)
             if (jmps[i].buf && jmps[i].ret == pc && jmps[i].sp == c->sp) longjmp(jmps[i].host, 1);
+        for (int i = 0; i < NJMP; i++)  // fallback: match return PC if SP was adjusted
+            if (jmps[i].buf && jmps[i].ret == pc) longjmp(jmps[i].host, 1);
         uint64_t off;
         const char *s = loader_symbol_at(c->x[30], &off);
         FATAL("no function at %llx (lr=%llx %s+%llx)\n", pc, c->x[30], s ? s : "?", off);

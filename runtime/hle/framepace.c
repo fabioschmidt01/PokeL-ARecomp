@@ -107,6 +107,47 @@ bool rt_pla_is_60fps(void) {
     g_za_frame_hook = true;
     const char *e = ENV("LARECOMP_FPS");
     if (e) return atoi(e) >= 60;
-    return g_settings.fps60 && (g_settings.fps60_lock || fps60_holds());
+    return g_settings.fps60;
+}
+
+// Pokémon Legends: Arceus 1.1.1 dynamic frame delta-time (tools/pla_patches.py):
+// PLA's frame clock (vtable 0x7004171538, f_70027812dc -> f_7002783048) loads a 64-bit nanosecond duration from
+// 0x700397e8d0 (mode 0 = 0x00fe502b = 16,666,667 ns for 60 FPS; mode 1 = 0x01fca056 = 33,333,334 ns for 30 FPS)
+// into 4 clock slots (0..3), and every game subsystem divides that nanosecond value by 1e9 to obtain float dt (seconds).
+// By supplying the real wall-clock frame duration in nanoseconds (clamped to [16.67 ms, 50.0 ms] when 60 FPS is on),
+// PLA runs at 1.0x normal speed at 60 FPS (no 2x speed-up) AND stays at 1.0x speed if FPS dips below 60 (no slow-motion),
+// matching TotK Recomp's dynamic delta-time behavior.
+uint64_t rt_pla_frame_dt_ns(uint32_t slot, uint64_t default_ns) {
+    bool fps60 = rt_pla_is_60fps();
+    uint64_t target_ns = fps60 ? 0x00fe502bull : (default_ns ? default_ns : 0x01fca056ull);
+    static uint64_t last_ns, cur_dt_ns;
+    static int logged_mode = -1;
+    if (logged_mode != (int)fps60) {
+        logged_mode = (int)fps60;
+        LOG("[pace] PLA frame clock mode: %s (target dt = %.3f ms, dynamic delta-time %s)\n",
+            fps60 ? "60 FPS" : "30 FPS", (double)target_ns / 1e6, fps60 ? "enabled" : "fixed");
+    }
+    if (!fps60) {
+        last_ns = 0;
+        cur_dt_ns = target_ns;
+        return target_ns;
+    }
+    if (slot == 0 || !cur_dt_ns) {
+        uint64_t now = plat_now_ns();
+        uint64_t real_ns = last_ns ? (now - last_ns) : target_ns;
+        last_ns = now;
+        const char *dyn = ENV("LARECOMP_DYNAMIC_DT");
+        if (dyn && atoi(dyn) == 0) {
+            cur_dt_ns = target_ns;
+        } else if (real_ns > 100000000ull) {
+            // Ignore long loading / shader-compile stalls (> 100 ms) so the player doesn't jump ahead
+            cur_dt_ns = target_ns;
+        } else {
+            if (real_ns < target_ns) real_ns = target_ns;
+            if (real_ns > 50000000ull) real_ns = 50000000ull;  // floor at 20 FPS (50 ms) max step
+            cur_dt_ns = cur_dt_ns ? (cur_dt_ns * 3 + real_ns) / 4 : real_ns;
+        }
+    }
+    return cur_dt_ns;
 }
 

@@ -16,6 +16,38 @@ def _pla_60fps(gen, a):
             f'  /* {a:#x}: 60fps unlocked pacing for PLA 1.1.1 */')
 
 
+def _pla_frame_dt_init(gen, a):
+    # 0x700277bde0: movk w9, #0x1fc, lsl #16 (completes w9 = 0x01fca056 = 33,333,334 ns = 1/30 s)
+    # Initializes all 4 frame-clock slots ([x0+128], [x0+144], [x0+160], [x0+176]).
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0x72a03f89, hex(w)
+    return ('{ extern uint64_t rt_pla_frame_dt_ns(uint32_t slot, uint64_t default_ns); '
+            'c->x[9] = rt_pla_frame_dt_ns(0, 0x01fca056ull); }'
+            f'  /* {a:#x}: PLA frame clock init delta-time (ns) */')
+
+
+def _pla_frame_dt_step(gen, a):
+    # 0x7002783050: ldr x2, [x8, w2, sxtw #3] (loads frame duration in ns from table at 0x700397e8d0)
+    # Called every frame in f_70027812dc for slots w1 = 0..3 with w2 = 1 (0x01fca056 = 33,333,334 ns).
+    # Returning true wall-clock / 60fps delta-time in ns keeps game speed at 1.0x at 60 FPS and below 60 FPS!
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0xf862d902, hex(w)
+    return ('{ extern uint64_t rt_pla_frame_dt_ns(uint32_t slot, uint64_t default_ns); '
+            'uint64_t ea = c->x[8] + ((int64_t)(int32_t)c->x[2] << 3); '
+            'c->x[2] = rt_pla_frame_dt_ns((uint32_t)c->x[1], LD64(ea)); }'
+            f'  /* {a:#x}: PLA dynamic frame delta-time (ns) */')
+
+
+def _pla_dynres_budget(gen, a):
+    # 0x7000cc3658: movk x9, #0x4040, lsl #48 (completes double 33.333333333333336 ms = 0x4040aaaab042528b)
+    # At 60 FPS, the frame budget for dynamic resolution is 16.666666666666668 ms (0x4030aaaab042528b).
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0xf2e80809, hex(w)
+    return ('{ extern _Bool rt_pla_is_60fps(void); '
+            'c->x[9] = (c->x[9] & 0xffffffffffffull) | ((rt_pla_is_60fps() ? 0x4030ull : 0x4040ull) << 48); }'
+            f'  /* {a:#x}: PLA dynamic resolution frame budget (16.67ms at 60fps, 33.33ms at 30fps) */')
+
+
 def _pla_crash_guard_null_check(gen, a):
     # 0x7002a8d750: ldr x8, [x21, #0x30]
     # In Jubilife Village / telemetry callbacks, x21 can be NULL (0x0). Guard against c0000005 accessing 0x30.
@@ -47,6 +79,9 @@ def pla_patches(build):
     if build.lower() == 'aee8f150dda1b5a8':
         return {
             0x7002aa2780: _pla_60fps,
+            0x700277bde0: _pla_frame_dt_init,
+            0x7002783050: _pla_frame_dt_step,
+            0x7000cc3658: _pla_dynres_budget,
             0x7002a8d734: _pla_crash_guard_store1,
             0x7002a8d750: _pla_crash_guard_null_check,
             0x7002a8d754: _pla_crash_guard_store2,

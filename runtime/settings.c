@@ -202,8 +202,11 @@ static int gpu_profile(unsigned vendor, bool integrated, uint64_t vram, const ch
             if (m >= 6000 && m % 1000 >= 600 && gb >= 8) return VPROF_HIGH;    // (RX 6600, 7600, 9060)
             return VPROF_MEDIUM;  // (RX 400 / 500 / Vega / 5000, 6500...)
         }
+    } else if (vendor == 0x8086) {  // Intel Arc
+        if (strstr(name, "Arc") && gb >= 10) return VPROF_ULTRA;  // (Intel Arc B580 / A770 12-16 GB)
+        if (strstr(name, "Arc") && gb >= 8) return VPROF_HIGH;
     }
-    return gb >= 8 ? VPROF_HIGH : VPROF_MEDIUM;  // (other dedicated GPUs: Intel Arc, unknown names)
+    return gb >= 8 ? VPROF_HIGH : VPROF_MEDIUM;  // (other dedicated GPUs: unknown names)
 }
 
 void settings_video_recommend(unsigned vendor, bool integrated, uint64_t vram, const char *gpu_name) {
