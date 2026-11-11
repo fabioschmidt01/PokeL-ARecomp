@@ -328,6 +328,37 @@ static const char *builtin_src(const char *name, int *stage) {
                "  o = vec4(pow((0.8359375 + 18.8515625 * n) / (1.0 + 18.6875 * n), vec3(78.84375)), 1.0);\n"
                "}\n";
     }
+    // ---- Frame Generation (exec.c vk_framegen_draw): interpolates between previous and current frames (90-120 FPS).
+    // With HUD Decoupling (flags.z > 0.5), it isolates the 3D scene from the 2D interface (minimap, texts, bars)
+    // using hdr_snapshot: the 3D scene is smoothly interpolated while the HUD remains razor-sharp from the current frame.
+    if (!strcmp(name, "framegen.frag")) {
+        *stage = STAGE_FRAGMENT;
+        return "#version 450\n"
+               "layout(set = 0, binding = 0) uniform sampler2D t_prev;\n"
+               "layout(set = 0, binding = 1) uniform sampler2D t_curr;\n"
+               "layout(set = 0, binding = 2) uniform sampler2D s_prev;\n"
+               "layout(set = 0, binding = 3) uniform sampler2D s_curr;\n"
+               "layout(push_constant) uniform P { vec4 vp; vec4 crop; vec4 cfg; vec4 flags; } pc;\n"
+               "layout(location = 0) out vec4 o;\n"
+               "float mx(vec3 v) { return max(v.r, max(v.g, v.b)); }\n"
+               "void main() {\n"
+               "  vec2 u = (gl_FragCoord.xy - pc.vp.xy) * pc.vp.zw;\n"
+               "  if (pc.flags.w > 0.5) u.y = 1.0 - u.y;\n"
+               "  vec2 t = pc.crop.xy + u * pc.crop.zw;\n"
+               "  vec3 c_curr = textureLod(t_curr, t, 0.0).rgb;\n"
+               "  vec3 c_prev = textureLod(t_prev, t, 0.0).rgb;\n"
+               "  if (pc.flags.z > 0.5) {\n"
+               "    vec3 sc_curr = textureLod(s_curr, t, 0.0).rgb;\n"
+               "    vec3 sc_prev = textureLod(s_prev, t, 0.0).rgb;\n"
+               "    float d_hud = mx(abs(c_curr - sc_curr));\n"
+               "    float is_hud = smoothstep(2.0 / 255.0, 8.0 / 255.0, d_hud);\n"
+               "    vec3 sc_interp = mix(sc_prev, sc_curr, pc.cfg.x);\n"
+               "    o = vec4(mix(sc_interp, c_curr, is_hud), 1.0);\n"
+               "  } else {\n"
+               "    o = vec4(mix(c_prev, c_curr, pc.cfg.x), 1.0);\n"
+               "  }\n"
+               "}\n";
+    }
     // ---- FSR 2's inputs (exec.c fsr2_frame): camera motion vectors and the reactive mask, at the scene's size. The
     // depth (reversed, infinite far plane) at each pixel, its point unjittered (jit.xy: the frame's jitter in pixels,
     // jit.zw: 1 / size), back through this frame's view-projection (inv_cur) and forward through the last frame's

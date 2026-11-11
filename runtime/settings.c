@@ -49,6 +49,8 @@ Settings g_settings = {
     .menu_confirm = MENU_CONFIRM_CONTROLLER,
     .show_fps = false,
     .fps60_lock = true,  // ("Drop to 30 fps when needed" off unless the player turns it on)
+    .framegen = false,
+    .hud_decoupling = true,
     .tex_hd = true,
     .shadow_res = 1,
     .shadow_sharp = 1,
@@ -288,6 +290,8 @@ void settings_load(void) {
         else if (!strcmp(key, "show_fps")) g_settings.show_fps = atoi(val) != 0;
         else if (!strcmp(key, "fps60")) g_settings.fps60 = atoi(val) != 0;
         else if (!strcmp(key, "fps60_lock")) g_settings.fps60_lock = atoi(val) != 0;
+        else if (!strcmp(key, "framegen")) g_settings.framegen = atoi(val) != 0;
+        else if (!strcmp(key, "hud_decoupling")) g_settings.hud_decoupling = atoi(val) != 0;
         else if (!strcmp(key, "hdr")) g_settings.hdr = atoi(val) != 0;
         else if (!strcmp(key, "hdr_peak_nits")) { int n = atoi(val); g_settings.hdr_peak = n < 200 ? 200 : n > 10000 ? 10000 : n; }
         else if (!strcmp(key, "hdr_paper_white_nits")) { int n = atoi(val); g_settings.hdr_paper = n < 80 ? 80 : n > 500 ? 500 : n; }
@@ -420,6 +424,8 @@ void settings_save(void) {
     fprintf(f, "show_fps = %d\n", g_settings.show_fps);
     fprintf(f, "fps60 = %d\n", g_settings.fps60);
     fprintf(f, "fps60_lock = %d\n", g_settings.fps60_lock);
+    fprintf(f, "framegen = %d\n", g_settings.framegen);
+    fprintf(f, "hud_decoupling = %d\n", g_settings.hud_decoupling);
     fprintf(f, "aniso16 = %d\n", g_settings.aniso16);
     fprintf(f, "hdr = %d\n", g_settings.hdr);
     fprintf(f, "hdr_peak_nits = %d\n", g_settings.hdr_peak);

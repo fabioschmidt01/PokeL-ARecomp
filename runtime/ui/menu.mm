@@ -480,6 +480,22 @@ static void tab_display(bool in_game) {
                                    TR("Running at 30 fps: this PC didn't keep 60 fps.", "Rodando a 30 fps: este PC não segurou 60 fps."));
         }
     }
+    {
+        int fg = g_settings.framegen ? 1 : 0;
+        const char *fg_rates[] = {TR("Off (1x)", "Desligado (1x)"), TR("On (2x - 90/120 FPS)", "Ligado (2x - 90/120 FPS)")};
+        if (opt_choice(TR("Frame generation", "Geração de quadros"), &fg, fg_rates, 2, 0,
+                       TR("Interpolates intermediate frames using Intel Arc / GPU optical flow & temporal pacing (90-120 FPS). "
+                          "Smooths gameplay without altering game logic clock.",
+                          "Interpola quadros intermediários usando fluxo óptico e estimativa temporal da GPU (90-120 FPS). "
+                          "Garante máxima fluidez sem alterar a velocidade do jogo.")))
+            g_settings.framegen = fg == 1;
+
+        opt_toggle(TR("HUD Decoupling", "Desacoplamento de HUD"), &g_settings.hud_decoupling, true,
+                   TR("Isolates 3D scene from 2D interface (minimap, HP bars, text, crosshairs) via hdr_snapshot. "
+                      "Keeps interface crisp and eliminates ghosting artifacts during frame generation.",
+                      "Isola a cena 3D da interface 2D (minimapa, barras de vida, textos, mira) via hdr_snapshot. "
+                      "Mantém a interface nítida e elimina artefatos de fantasma durante a geração de quadros."));
+    }
     {   // (runtime/nvn/vulkan/textures.c vk_sampler_settings: every sampler made again, at once)
         int tf = g_settings.aniso16 ? 1 : 0;
         const char *tfs[] = {TR("Game's", "Do jogo"), TR("High", "Alta")};
@@ -1411,7 +1427,9 @@ static void perfmon_draw(const ImVec2 &display, float scale) {
                      s.scaler == 2 ? "AMD FSR 1" :
                      s.scaler == 4 ? TR("downscale", "redução") :
                      s.scaler == 1 ? TR("bilinear", "bilinear") : TR("none (1:1)", "nenhuma (1:1)"));
-            snprintf(v[4], sizeof v[4], "%s", g_settings.fps60 ? "60 FPS" : "30 FPS");
+            snprintf(v[4], sizeof v[4], "%s",
+                     g_settings.framegen ? (g_settings.fps60 ? "120 FPS (FG 2x)" : "60 FPS (FG 2x)") :
+                     (g_settings.fps60 ? "60 FPS" : "30 FPS"));
             snprintf(v[5], sizeof v[5], "%s", g_settings.present_fifo ? "VSync" : TR("Low latency", "Baixa latência"));
 
             const char *labels[6] = {

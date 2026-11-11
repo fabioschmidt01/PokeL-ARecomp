@@ -34,7 +34,7 @@ command -v /c/Windows/System32/curl.exe >/dev/null 2>&1 && CURL_BIN="/c/Windows/
 TAR_BIN="tar"
 command -v /c/Windows/System32/tar.exe >/dev/null 2>&1 && TAR_BIN="/c/Windows/System32/tar.exe"
 GENOPT="-O1 -DGUEST_VOLATILE" GENARCH=-march=x86-64-v3  # (the game code's flags: part of the library id)
-B=build/za-dist D="build/dist-za/ZA Recomp"
+B=build/za-dist D="build/dist-za/PokeL-ARecomp"
 
 # 1. the compiler (Windows' curl: MSYS2's one rejects TLS-inspecting proxies' certificates)
 ZIP_ZIG=build/zig-dl/zig-x86_64-windows-0.17.0.zip
@@ -127,6 +127,6 @@ PATH="$PWD/build/deps-win/bin:$PATH" ldd $B/PokeL-ARecomp.exe | awk 'tolower($3)
 ! ls "$D" | grep -iE 'x264|x265|xvid|postproc'  # (no GPL codec libraries in the release)
 du -sh "$D"
 if [ "${ZIP:-0}" = 1 ]; then
-    (cd build/dist-za && $TAR_BIN -a -cf ZA-Recomp-windows.zip "ZA Recomp")
-    ls -la build/dist-za/ZA-Recomp-windows.zip
+    (cd build/dist-za && $TAR_BIN -a -cf PokeL-ARecomp-windows-x64.zip "PokeL-ARecomp")
+    ls -la build/dist-za/PokeL-ARecomp-windows-x64.zip
 fi

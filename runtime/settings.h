@@ -57,6 +57,8 @@ typedef struct {
     bool movie_audio;
     bool show_fps;
     bool fps60;  // Pokémon Z-A: its frame clock at 1/60 s per frame (runtime/hle/framepace.c)
+    bool framegen;  // Frame generation: interpolate intermediate frames (90-120 fps) via optical flow & temporal pacing
+    bool hud_decoupling; // HUD Decoupling: isolate 3D scene from 2D interface via hdr_snapshot for clean interpolation
     bool aniso16;  // Texture filtering High: 16x anisotropic and trilinear on every mipmapped sampler (runtime/nvn/vulkan/textures.c)
     bool hdr;            // HDR output when Windows has the display in HDR mode (vulkan/device.c, exec.c vk_hdr_encode)
     int hdr_peak;        // HDR: the brightest highlights, nits

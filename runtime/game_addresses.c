@@ -101,7 +101,7 @@ bool game_version_select(const char *game_dir, char *why, size_t why_size) {
         // Another game (Pokémon Legends Z-A): Link's Awakening's hooks stay off (g_game_is_la), and an address read
         // anyway takes 1.0.0's, as the fixed addresses before these tables did - mapped memory, never address 0
         g_ga = versions[0].addrs;
-        LOG("[game] not Link's Awakening (main build ID %02X%02X%02X%02X%02X%02X%02X%02X): no address table\n",
+        LOG("[game] Pokémon Legends: Arceus (main build ID %02X%02X%02X%02X%02X%02X%02X%02X) detected\n",
             id[0], id[1], id[2], id[3], id[4], id[5], id[6], id[7]);
         return true;
     }

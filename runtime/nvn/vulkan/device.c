@@ -1645,6 +1645,7 @@ void vk_save_png(const char *path, const uint8_t *rgba, uint32_t w, uint32_t h) 
 // ================================================================== game presentation (metal.m backend_present)
 // Draws the game's image into the window with the widescreen crop, then the overlay menu.
 extern void vk_present_draw(VkCommandBuffer cb, TexBackend *b, float vx, float vy, float vw, float vh, const float pv[8]);
+extern void vk_framegen_draw(VkCommandBuffer cb, TexBackend *prev, TexBackend *curr, float vx, float vy, float vw, float vh, const float pv[8], float blend);
 extern bool g_debug_frame;  // (exec.c; set in present_hooks, read in the render thread's present)
 void renderer_submit(void);
 void renderer_set_scale(float sx, float sy);
@@ -1660,7 +1661,11 @@ uint64_t vk_frame_counter(void) { return renderer_exec_frame(); }  //
 static float g_shot_crop[4] = {0, 0, 1, 1};
 static double last_fps_time;
 static NvnTexture *g_last_presented;
-void vk_device_texture_destroyed(NvnTexture *t) { if (g_last_presented == t) g_last_presented = NULL; }  // (textures.c)
+static TexBackend *g_prev_frame_b;
+void vk_device_texture_destroyed(NvnTexture *t) {
+    if (g_last_presented == t) g_last_presented = NULL;
+    if (t && g_prev_frame_b == t->backend) g_prev_frame_b = NULL;
+}  // (textures.c)
 
 const float *vk_shot_crop(void) { return g_shot_crop; }
 
@@ -1891,19 +1896,36 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         VkCommandBuffer cb = vk_cmd();
         float pv[8] = {renderer_origin_lower_left() ? 1.0f : 0.0f, 0, 0, 0, crop[0], crop[1], crop[2], crop[3]};
         memcpy(g_shot_crop, crop, sizeof crop);
-        vk_present_draw(cb, b, (float)vx, (float)vy, (float)vw, (float)vh, pv);
         pp_mark(PP_BLIT);
         static long menu_at = -1;
         if (menu_at < 0) menu_at = getenv("LARECOMP_MENU_AT") ? atol(getenv("LARECOMP_MENU_AT")) : 0;
         if (menu_at && (long)frame + 1 == menu_at) { extern void menu_test_open(void); menu_test_open(); }
-        // (ImGui records through vk_overlay_begin / vk_overlay_end, when it draws anything)
-        vk_hdr_mark_base();
-        menu_render((void *)cb, g_vk.sc_extent.width, g_vk.sc_extent.height);
-        pp_mark(PP_OVERLAY);
         static long win_shot = -1;
         if (win_shot < 0) win_shot = getenv("LARECOMP_WINDOW_SHOT") ? atol(getenv("LARECOMP_WINDOW_SHOT")) : 0;
         bool shot = win_shot && (long)frame + 1 == win_shot;
-        vk_frame_end(shot ? "build/window.png" : NULL);
+
+        if (g_settings.framegen && g_prev_frame_b && g_prev_frame_b->image && g_prev_frame_b != b) {
+            // Frame Generation (90-120 FPS): interpolate intermediate frame with HUD Decoupling
+            vk_framegen_draw(cb, g_prev_frame_b, b, (float)vx, (float)vy, (float)vw, (float)vh, pv, 0.5f);
+            vk_hdr_mark_base();
+            menu_render((void *)cb, g_vk.sc_extent.width, g_vk.sc_extent.height);
+            vk_frame_end(NULL);
+            // Present base frame to the next swapchain image
+            if (vk_frame_begin(black)) {
+                cb = vk_cmd();
+                vk_present_draw(cb, b, (float)vx, (float)vy, (float)vw, (float)vh, pv);
+                vk_hdr_mark_base();
+                menu_render((void *)cb, g_vk.sc_extent.width, g_vk.sc_extent.height);
+                vk_frame_end(shot ? "build/window.png" : NULL);
+            }
+        } else {
+            vk_present_draw(cb, b, (float)vx, (float)vy, (float)vw, (float)vh, pv);
+            vk_hdr_mark_base();
+            menu_render((void *)cb, g_vk.sc_extent.width, g_vk.sc_extent.height);
+            vk_frame_end(shot ? "build/window.png" : NULL);
+        }
+        g_prev_frame_b = b;
+        pp_mark(PP_OVERLAY);
         if (shot && getenv("LARECOMP_EXIT_AFTER_SHOT")) exit_after_shot();
     } else {
         renderer_submit();

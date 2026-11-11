@@ -203,7 +203,7 @@ static void load_refs(void) {
             if (!memcmp(f + i, "BNTX\0\0\0\0", 8)) { scan_bntx(f + i, len - i, true); break; }
         free(f);
     }
-    LOG("[texpatch] %d known textures (button glyphs, pictogram sheet, Hero Mode icon, bottle icon / model, tunic, hearts)\n",
+    LOG("[texpatch] %d known textures (button glyphs, pictogram sheet, UI overlays)\n",
         g_nrefs);
 }
 

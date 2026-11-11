@@ -99,11 +99,14 @@ jobs:
           export ZIP=1
           bash tools/za/dist.sh
 
-      - name: Rename Output Zip
+      - name: Verify Output Zip
         shell: pwsh
         run: |
           if (Test-Path "build/dist-za/ZA-Recomp-windows.zip") {
             Move-Item -Force "build/dist-za/ZA-Recomp-windows.zip" "build/dist-za/PokeL-ARecomp-windows-x64.zip"
+          }
+          if (!(Test-Path "build/dist-za/PokeL-ARecomp-windows-x64.zip")) {
+            throw "Expected package build/dist-za/PokeL-ARecomp-windows-x64.zip was not found!"
           }
 
       - name: Upload Windows Artifact

@@ -1603,7 +1603,9 @@ static void begin_pass(void) {
             extern bool rq_on(void);
             const char *e = getenv("LARECOMP_CHUNK_PASSES");
             chunk_env = e != NULL;
-            chunk = e ? atoi(e) : rq_on() ? 8 : 0;
+            // High draw/pass-count optimization for multi-core CPUs (Xeon / Ryzen): 32 passes per submission
+            // dramatically cuts dxgkrnl/driver submission overhead while keeping the GPU pipeline saturated.
+            chunk = e ? atoi(e) : rq_on() ? 32 : 0;
         }
         int c = chunk;
         if (c > 0 && !chunk_env && heap_whole_userptr()) {  // (decided at boot: asked here, not cached before it)
@@ -4484,7 +4486,7 @@ static void gmem_chunk_decide(void) {
     if (!g_game_is_la || !game_files_are_la("extracted")) {
         gc_lazy = maxwell_gmem_lazy = maxwell_gmem_fs_miss = false;
         gc_shift = 0, gc_n = 0, gc_shift_decided = 0;
-        LOG("[vk] guest memory: one import of the game's window (not Link's Awakening: no heap chunks)\n");
+        LOG("[vk] guest memory: direct linear physical window import (full pool)\n");
         return;
     }
     const char *e = getenv("LARECOMP_VK_GMEM_CHUNK_MB");
@@ -6589,7 +6591,7 @@ static void draw(CmdRec *r, bool indexed) {
                 (unsigned long long)xfb_addr[2], (unsigned long long)xfb_size[2]);
     }
     draw_(r, indexed);
-    if (g_vk.hdr && st.rt.color[0] && !st.color_state[0] && st.rt.color[0]->backend &&
+    if ((g_vk.hdr || g_settings.hud_decoupling || g_settings.framegen) && st.rt.color[0] && !st.color_state[0] && st.rt.color[0]->backend &&
         ((TexBackend *)st.rt.color[0]->backend)->presented)
         hdr_snapshot(st.rt.color[0]);  // (the game's picture in the image it shows, before the HUD over it)
     PROF_ADD(prof_draw);
@@ -8838,7 +8840,7 @@ void vk_present_draw(VkCommandBuffer cb, TexBackend *b, float vx, float vy, floa
     // Dynamic: the image occupies the top-left part of the texture; FSR maps that part to its whole output, otherwise
     // the present samples the part
     float fx = b->scalable && b->ax > 0 ? b->sx / b->ax : 1, fy = b->scalable && b->ay > 0 ? b->sy / b->ay : 1;
-    if (g_vk.hdr) {  // (vk_hdr_encode: where the game image is, to find its HUD)
+    if (g_vk.hdr || g_settings.hud_decoupling || g_settings.framegen) {  // (vk_hdr_encode: where the game image is, to find its HUD)
         hdr_game = b;
         float g[12] = {vx, vy, vw > 0 ? 1 / vw : 0, vh > 0 ? 1 / vh : 0, pv[4] * fx, pv[5] * fy, pv[6] * fx, pv[7] * fy, pv[0]};
         memcpy(hdr_place, g, sizeof hdr_place);
@@ -8863,6 +8865,98 @@ void vk_present_draw(VkCommandBuffer cb, TexBackend *b, float vx, float vy, floa
     memcpy(pc, pv, 32);
     screen_filter_params(pc + 8);
     rec_CmdPushConstants(cb, present_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 48, pc);
+    fullscreen_vertex_bind(cb);
+    rec_CmdDraw(cb, 3, 1, 0, 0);
+    VkViewport full = {0, 0, (float)g_vk.sc_extent.width, (float)g_vk.sc_extent.height, 0, 1};
+    rec_CmdSetViewport(cb, 0, 1, &full);
+}
+
+// Frame Generation presentation draw (device.c backend_present_now):
+// interpolates between prev and curr with HUD decoupling mask to eliminate ghosting on UI.
+void vk_framegen_draw(VkCommandBuffer cb, TexBackend *prev, TexBackend *curr, float vx, float vy, float vw, float vh, const float pv[8], float blend) {
+    if (!prev || !curr || !prev->image || !curr->image) return;
+    static VkPipelineLayout layout;
+    static VkDescriptorSetLayout dsl;
+    static VkPipeline pipe;
+    static VkFormat pipe_fmt;
+    if (!layout) {
+        VkDescriptorSetLayoutBinding bd[4];
+        for (uint32_t i = 0; i < 4; i++)
+            bd[i] = (VkDescriptorSetLayoutBinding){i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL};
+        VkDescriptorSetLayoutCreateInfo li = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 4, .pBindings = bd};
+        VK_CHECK(vkCreateDescriptorSetLayout(g_vk.dev, &li, NULL, &dsl));
+        VkPushConstantRange r = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, 64};
+        VkPipelineLayoutCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1,
+                                         .pSetLayouts = &dsl, .pushConstantRangeCount = 1, .pPushConstantRanges = &r};
+        VK_CHECK(vkCreatePipelineLayout(g_vk.dev, &ci, NULL, &layout));
+    }
+    if (!pipe || pipe_fmt != g_vk.sc_format) {
+        VkPipelineShaderStageCreateInfo stages[2] = {
+            {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_VERTEX_BIT,
+             .module = vk_builtin_shader("post.vert"), .pName = "main"},
+            {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+             .module = vk_builtin_shader("framegen.frag"), .pName = "main"}};
+        VkPipelineVertexInputStateCreateInfo vi = {.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        VkPipelineInputAssemblyStateCreateInfo ia = {.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+                                                     .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST};
+        VkPipelineViewportStateCreateInfo vs = {.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO, .viewportCount = 1, .scissorCount = 1};
+        VkPipelineRasterizationStateCreateInfo rs = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+                                                     .polygonMode = VK_POLYGON_MODE_FILL, .lineWidth = 1};
+        VkPipelineMultisampleStateCreateInfo ms = {.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+                                                   .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT};
+        VkPipelineColorBlendAttachmentState cba = {.colorWriteMask = 0xF};
+        VkPipelineColorBlendStateCreateInfo cbs = {.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, .attachmentCount = 1,
+                                                   .pAttachments = &cba};
+        VkDynamicState dyn[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        uint32_t ndyn = 2;
+        fullscreen_vertex_dyn(dyn, &ndyn, 3);
+        VkPipelineDynamicStateCreateInfo dy = {.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, .dynamicStateCount = ndyn, .pDynamicStates = dyn};
+        VkPipelineRenderingCreateInfo ri = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, .colorAttachmentCount = 1,
+                                            .pColorAttachmentFormats = &g_vk.sc_format};
+        VkPipelineDepthStencilStateCreateInfo ds = {.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+        VkGraphicsPipelineCreateInfo pi = {.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &ri, .stageCount = 2,
+                                           .pStages = stages, .pVertexInputState = &vi, .pInputAssemblyState = &ia, .pViewportState = &vs,
+                                           .pRasterizationState = &rs, .pMultisampleState = &ms, .pDepthStencilState = &ds,
+                                           .pColorBlendState = &cbs, .pDynamicState = &dy, .layout = layout};
+        VK_CHECK(vkCreateGraphicsPipelines(g_vk.dev, g_vk.pcache, 1, &pi, NULL, &pipe));
+        pipe_fmt = g_vk.sc_format;
+    }
+    TexBackend *s_prev = hdr_snap_of(prev);
+    TexBackend *s_curr = hdr_snap_of(curr);
+    VkImageView prev_v = raw_view(prev), curr_v = raw_view(curr);
+    VkImageView sprev_v = s_prev ? post_view(s_prev) : prev_v;
+    VkImageView scurr_v = s_curr ? post_view(s_curr) : curr_v;
+
+    VkDescriptorSet set = vk_alloc_set(dsl);
+    VkSampler lin = vk_default_sampler(true);
+    VkDescriptorImageInfo ii[4] = {{lin, prev_v, VK_IMAGE_LAYOUT_GENERAL},
+                                   {lin, curr_v, VK_IMAGE_LAYOUT_GENERAL},
+                                   {lin, sprev_v, VK_IMAGE_LAYOUT_GENERAL},
+                                   {lin, scurr_v, VK_IMAGE_LAYOUT_GENERAL}};
+    VkWriteDescriptorSet wr[4];
+    for (uint32_t i = 0; i < 4; i++)
+        wr[i] = (VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set, .dstBinding = i, .descriptorCount = 1,
+                                       .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &ii[i]};
+    rec_UpdateDescriptorSets(4, wr);
+
+    float fx = curr->scalable && curr->ax > 0 ? curr->sx / curr->ax : 1;
+    float fy = curr->scalable && curr->ay > 0 ? curr->sy / curr->ay : 1;
+    float pc[16] = {0};
+    pc[0] = vx; pc[1] = vy; pc[2] = vw > 0 ? 1.0f / vw : 0; pc[3] = vh > 0 ? 1.0f / vh : 0;
+    pc[4] = pv[4] * fx; pc[5] = pv[5] * fy; pc[6] = pv[6] * fx; pc[7] = pv[7] * fy;
+    pc[8] = blend; // cfg.x
+    pc[9] = 0; pc[10] = 0; pc[11] = 0;
+    pc[12] = 0; pc[13] = 0;
+    pc[14] = (s_prev && s_curr && g_settings.hud_decoupling) ? 1.0f : 0.0f; // flags.z (HUD decoupling active)
+    pc[15] = pv[0]; // flags.w (flip)
+
+    rec_CmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+    rec_CmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &set, 0, NULL);
+    VkViewport vp = {vx, vy, vw, vh, 0, 1};
+    rec_CmdSetViewport(cb, 0, 1, &vp);
+    VkRect2D sc = {{0, 0}, g_vk.sc_extent};
+    rec_CmdSetScissor(cb, 0, 1, &sc);
+    rec_CmdPushConstants(cb, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, 64, pc);
     fullscreen_vertex_bind(cb);
     rec_CmdDraw(cb, 3, 1, 0, 0);
     VkViewport full = {0, 0, (float)g_vk.sc_extent.width, (float)g_vk.sc_extent.height, 0, 1};
