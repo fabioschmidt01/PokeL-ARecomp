@@ -28,8 +28,8 @@ The game's ARM64 machine code is translated ahead-of-time (AOT) into C and compi
 ## Features
 
 ### Performance & Engine
-- **Native 60 FPS** at regular game speed with dynamic delta-time pacing, or 30 FPS console parity.
-- **Frame Generation (90–120 FPS)**: Hardware-accelerated optical flow frame interpolation smooths motion to 90–120 FPS without speeding up game logic.
+- **30 or 60 FPS Target (Option)**: Native game speed with dynamic delta-time pacing. The frame rate is unsteady in the open world (around 40–50 fps on the test machine, with drops in demanding areas), and there are brief hitches the first time each shader is compiled.
+- **Frame Generation (90–120 FPS)**: Optional hardware-accelerated optical flow frame interpolation smooths motion up to 90–120 FPS without speeding up game logic.
 - **HUD Decoupling**: Isolates 2D UI elements (minimap, health gauges, reticles, text) via `hdr_snapshot` to eliminate ghosting artifacts during Frame Generation.
 - **Explicit VSync Modes**: Choose between *Off (Low Latency / Mailbox)*, *On (VSync / 60 Hz - FIFO)*, or *Off (Unlimited / Immediate)* with instant swapchain recreation.
 - **Internal Resolution Scaling**: From 25% up to 4x native 1080p (4K UHD) with Dynamic Resolution scaling.
@@ -155,6 +155,7 @@ This project stands on the shoulders of giants. We express our deepest gratitude
 
 - **[Peiikai](https://github.com/peiikai)**: Creator of [LAS Recomp](https://github.com/peiikai/LASRecomp), who invented the static recompilation architecture, ARM64-to-C ahead-of-time code translation pipeline, fast-memory execution model, and Maxwell-to-SPIR-V shader translation.
 - **[Hexveil404](https://github.com/Hexveil404)**: Creator of [PokeZ-ARecomp](https://github.com/Hexveil404/PokeZ-ARecomp), who extended LAS Recomp to modern Pokémon engine architectures, developed custom Switch OS HLE services, and proved that full Switch Pokémon titles can run natively on PC.
+- **fabioschmidt01 & Antigravity**: Architecture, Intel Xeon multi-threading, Intel Arc B580 tuning, Intel XeSS integration, HUD decoupling, standalone extractor tool, and the Pokémon Legends: Arceus & Violet ports.
 - **[Thealexbarney](https://github.com/Thealexbarney)**: Creator of [LibHac](https://github.com/Thealexbarney/LibHac), powering our standalone `PokeL-Extractor` ROM analysis and BKTR patch merger.
 - **[Ryujinx Project](https://github.com/Ryujinx/Ryujinx)**: Exceptional behavioral reference and documentation for Nintendo Switch OS kernel and Maxwell NVN graphics behavior.
 - **Open-source libraries**: SDL3, FFmpeg, Dear ImGui, Vulkan Memory Allocator, Shaderc, XeGTAO, AMD FidelityFX, Intel XeSS.

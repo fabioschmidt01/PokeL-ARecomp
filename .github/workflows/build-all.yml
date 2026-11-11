@@ -143,7 +143,8 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/src" -w /src za-linux-build bash -euo pipefail -c '
             apt-get update
-            apt-get install -y --no-install-recommends dotnet-sdk-8.0 python3-venv
+            apt-get install -y --no-install-recommends dotnet-sdk-8.0 python3-venv python-is-python3 || apt-get install -y --no-install-recommends dotnet-sdk-8.0 python3-venv
+            [ -x /usr/bin/python ] || ln -sf /usr/bin/python3 /usr/bin/python
             git config --global --add safe.directory /src
             PYTHON=python3.12 tools/za/dist-linux.sh'
 

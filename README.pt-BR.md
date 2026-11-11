@@ -28,8 +28,8 @@ O código de máquina ARM64 do jogo é traduzido antecipadamente (AOT) para C e 
 ## Recursos e Destaques
 
 ### Desempenho e Motor
-- **60 FPS Nativos** na velocidade normal do jogo com ritmo dinâmico de delta-time, ou 30 FPS idêntico ao console original.
-- **Geração de Quadros (Frame Generation - 90 a 120 FPS)**: Interpolação acelerada por hardware que suaviza a movimentação para 90–120 FPS sem acelerar a lógica do jogo.
+- **Meta de 30 ou 60 FPS (Opção)**: Velocidade normal com ritmo dinâmico de delta-time. A taxa de quadros é instável no mundo aberto (em torno de 40 a 50 fps na máquina de teste, com quedas em áreas mais pesadas), além de pequenos engasgos na primeira compilação de cada shader.
+- **Geração de Quadros (Frame Generation - 90 a 120 FPS)**: Interpolação opcional acelerada por hardware que suaviza a movimentação para 90–120 FPS sem acelerar a física ou lógica do jogo.
 - **Desacoplamento de HUD (HUD Decoupling)**: Isola elementos 2D (minimapa, mira de captura, barras de vida, caixas de diálogo) via `hdr_snapshot` para eliminar artefatos e fantasmas visuais com a Geração de Quadros ativada.
 - **Modos Explícitos de VSync**: Selecione entre *Desligado (Baixa Latência / Mailbox)*, *Ligado (VSync / 60 Hz - FIFO)* ou *Desligado (Sem Limite / Immediate)* com recriação dinâmica e imediata da swapchain Vulkan.
 - **Escala de Resolução Interna**: De 25% até 4x 1080p nativo (4K UHD) com resolução dinâmica.
@@ -155,6 +155,7 @@ Este projeto foi construído graças ao trabalho pioneiro da comunidade de códi
 
 - **[Peiikai](https://github.com/peiikai)**: Criador do [LAS Recomp](https://github.com/peiikai/LASRecomp), arquiteto da tecnologia de recompilação estática de ARM64 para C, modelo de memória rápida e tradutor de shaders Maxwell para SPIR-V/Vulkan.
 - **[Hexveil404](https://github.com/Hexveil404)**: Criador do [PokeZ-ARecomp](https://github.com/Hexveil404/PokeZ-ARecomp), pioneiro na adaptação de jogos Pokémon para recompilação estática em PC e desenvolvimento de serviços HLE de sistema operacional.
+- **fabioschmidt01 & Antigravity**: Arquitetura, multi-threading para Intel Xeon, otimizações para Intel Arc B580, integração do Intel XeSS, desacoplamento de HUD, extrator standalone e os ports de Pokémon Legends: Arceus e Violet.
 - **[Thealexbarney](https://github.com/Thealexbarney)**: Criador da biblioteca [LibHac](https://github.com/Thealexbarney/LibHac), base do nosso utilitário independente `PokeL-Extractor`.
 - **[Projeto Ryujinx](https://github.com/Ryujinx/Ryujinx)**: Referência de excelência comportamental das chamadas de sistema e comandos gráficos do Nintendo Switch.
 - **Bibliotecas**: SDL3, FFmpeg, Dear ImGui, Vulkan Memory Allocator, Shaderc, XeGTAO, AMD FidelityFX, Intel XeSS.

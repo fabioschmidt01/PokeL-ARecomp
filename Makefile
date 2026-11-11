@@ -12,6 +12,7 @@ PLATFORM := linux
 else
 PLATFORM := macos
 endif
+PYTHON   ?= python3
 
 # Linux: ARCH (x86_64 / aarch64, default this machine's) picks the target, separately from PLATFORM. The generated code
 # differs per arch (AArch64 hosts run the guest's FP/SIMD as inline asm, others use the portable C of simd.h), so a
@@ -162,7 +163,7 @@ $(B)/rt/%.o: runtime/%.c $(RT_HDRS)
 # the string literals ends them early on macOS clang)
 $(B)/inc/smaa_hlsl.inc: third_party/smaa/SMAA.hlsl tools/file_to_c_string.py
 	@mkdir -p $(dir $@)
-	python tools/file_to_c_string.py smaa $< $@
+	$(PYTHON) tools/file_to_c_string.py smaa $< $@
 $(B)/rt/nvn/smaa_data.o: $(B)/inc/smaa_hlsl.inc
 $(B)/rt/nvn/smaa_data.o: RTFLAGS += -I$(B)/inc -Ithird_party/smaa/Textures
 
@@ -171,7 +172,7 @@ $(B)/rt/nvn/smaa_data.o: RTFLAGS += -I$(B)/inc -Ithird_party/smaa/Textures
 FSR2_SHADERS := $(wildcard third_party/fsr2/shaders/*.h third_party/fsr2/shaders/*.glsl)
 $(B)/inc/fsr2_shaders.inc: $(FSR2_SHADERS) tools/file_to_c_string.py
 	@mkdir -p $(dir $@)
-	python tools/file_to_c_string.py fsr2 $@ $(FSR2_SHADERS)
+	$(PYTHON) tools/file_to_c_string.py fsr2 $@ $(FSR2_SHADERS)
 $(B)/rt/nvn/vulkan/fsr2_shaders.o: $(B)/inc/fsr2_shaders.inc
 $(B)/rt/nvn/vulkan/fsr2_shaders.o: CXXFLAGS += -I$(B)/inc
 FSR2_OBJ := $(B)/fsr2/ffx_fsr2.o $(B)/fsr2/ffx_assert.o $(B)/fsr2/vk/ffx_fsr2_vk.o
@@ -188,7 +189,7 @@ $(B)/fsr2/%.o: third_party/fsr2/%.cpp
 # as a C string for runtime/nvn/shader_prep.c
 $(B)/inc/shader_variants.inc: runtime/nvn/shader_variants.txt tools/file_to_c_string.py
 	@mkdir -p $(dir $@)
-	python tools/file_to_c_string.py variants $< $@
+	$(PYTHON) tools/file_to_c_string.py variants $< $@
 $(B)/rt/nvn/shader_prep.o: $(B)/inc/shader_variants.inc
 $(B)/rt/nvn/shader_prep.o: RTFLAGS += -I$(B)/inc
 # the shader translator's id: part of the shader caches' tag (shader_cache_tag), so a changed translator rebuilds them
