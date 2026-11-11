@@ -18,7 +18,7 @@ P=$L/deps
 B=$L/za
 APPDIR=$L/za-AppDir
 VERSION=$(sed -n 's/^#define LARECOMP_VERSION "\(.*\)"/\1/p' runtime/ui/launcher.mm)
-OUT="build/dist/ZA Recomp-$VERSION-linux-$ARCH.AppImage"
+OUT="build/dist/PokeL-ARecomp-$VERSION-linux-$ARCH.AppImage"
 ZAIMPORT=${ZAIMPORT:-1}
 PY=${PYTHON:-python3}  # (the helpers' venvs; e.g. PYTHON=python3.12 in tools/linux/Containerfile's image)
 
@@ -87,17 +87,17 @@ cp README.md LICENSE "$D/"  # (licenses and source links of the bundled componen
 mkdir -p "$D/docs" && cp docs/XBOX-ATTACK-LAYOUT.md "$D/docs/"
 cp tools/za/za-default.ini "$D/za-default.ini"  # (not larecomp.ini: the data folder holds the player's own)
 cp tools/linux/AppRun "$APPDIR/" && chmod +x "$APPDIR/AppRun"
-cat > "$APPDIR/zarecomp.desktop" <<EOF
+cat > "$APPDIR/pokelrecomp.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=ZA Recomp
-Comment=Pokémon Legends: Z-A, recompiled for PC (bring your own game files)
+Name=PokeL-ARecomp
+Comment=Pokémon Legends: Arceus, recompiled for PC (bring your own game files)
 Exec=lasrecomp
-Icon=zarecomp
+Icon=pokelrecomp
 Categories=Game;
 Terminal=false
 EOF
-cp docs/icon/icon_1024.png "$APPDIR/zarecomp.png" && ln -sf zarecomp.png "$APPDIR/.DirIcon"
+cp docs/icon/icon_1024.png "$APPDIR/pokelrecomp.png" && ln -sf pokelrecomp.png "$APPDIR/.DirIcon"
 
 # libraries: what lasrecomp needs (DT_NEEDED, recursively) that deps/ provides; anything else must be a system one
 # (glibc, libstdc++, the Vulkan loader: a bundled loader would not find the user's GPU drivers)

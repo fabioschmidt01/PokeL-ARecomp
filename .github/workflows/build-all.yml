@@ -126,9 +126,48 @@ jobs:
           path: build/dist-za/PokeL-Extractor.exe
           if-no-files-found: warn
 
+  linux:
+    name: Linux x86_64 AppImage
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build Docker Container
+        run: docker build -t za-linux-build -f tools/linux/Containerfile tools/linux
+
+      - name: Compile AppImage
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src za-linux-build bash -euo pipefail -c '
+            apt-get update
+            apt-get install -y --no-install-recommends dotnet-sdk-8.0 python3-venv
+            git config --global --add safe.directory /src
+            PYTHON=python3.12 tools/za/dist-linux.sh'
+
+      - name: Rename Output AppImage
+        shell: bash
+        run: |
+          mkdir -p build/dist
+          for f in build/dist/*.AppImage; do
+            if [ -f "$f" ]; then
+              echo "Found AppImage: $f"
+              cp -v "$f" "build/dist/PokeL-ARecomp-linux-x86_64.AppImage" || true
+            fi
+          done
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokeL-ARecomp-linux-x86_64
+          path: build/dist/*.AppImage
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
-    needs: [windows]
+    needs: [windows, linux]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -144,12 +183,19 @@ jobs:
           name: PokeL-Extractor-standalone-windows-x64
           path: dist-release
 
+      - name: Download Linux Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PokeL-ARecomp-linux-x86_64
+          path: dist-release
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist-release/*.zip
             dist-release/*.exe
+            dist-release/*.AppImage
           name: "PokeL-ARecomp ${{ github.ref_name }}"
           draft: false
           prerelease: false
@@ -159,7 +205,8 @@ jobs:
             Native PC port of **Pokémon Legends: Arceus** (1.1.1).
             
             ### Included in this release:
-            - **Game Distribution**: `PokeL-ARecomp-windows-x64.zip`
+            - **Windows Package**: `PokeL-ARecomp-windows-x64.zip`
+            - **Linux AppImage**: `PokeL-ARecomp-linux-x86_64.AppImage` (glibc 2.35+, Steam Deck / Ubuntu / Mint / Fedora / Arch)
             - **Standalone ROM Extractor**: `PokeL-Extractor.exe` (WinForms GUI & CLI standalone tool for NSP/XCI RomFS/ExeFS extraction)
             
             ### Highlights:
