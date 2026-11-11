@@ -28,17 +28,25 @@ The game's ARM64 machine code is translated ahead-of-time (AOT) into C and compi
 ## Features
 
 ### Performance & Engine
-- **Native 60 FPS** at regular game speed or 30 FPS console parity.
+- **Native 60 FPS** at regular game speed with dynamic delta-time pacing, or 30 FPS console parity.
+- **Frame Generation (90–120 FPS)**: Hardware-accelerated optical flow frame interpolation smooths motion to 90–120 FPS without speeding up game logic.
+- **HUD Decoupling**: Isolates 2D UI elements (minimap, health gauges, reticles, text) via `hdr_snapshot` to eliminate ghosting artifacts during Frame Generation.
+- **Explicit VSync Modes**: Choose between *Off (Low Latency / Mailbox)*, *On (VSync / 60 Hz - FIFO)*, or *Off (Unlimited / Immediate)* with instant swapchain recreation.
 - **Internal Resolution Scaling**: From 25% up to 4x native 1080p (4K UHD) with Dynamic Resolution scaling.
 - **High Core-Count Scaling (Intel Xeon & Multi-Core CPUs)**: Dynamic worker thread scaling (up to 8 parallel texture deswizzling threads on 16-24+ thread CPUs) eliminating texture streaming stutter.
 - **Dedicated GPU Memory Unlocking (Intel Arc & High-VRAM GPUs)**: Full 3.1 GB physical pool unlocked for GPUs with dedicated VRAM (such as the 12 GB Intel Arc B580 Battlemage), preventing memory thrashing.
 
 ### Graphics & Upscaling
-- **Intel XeSS (Xe Super Sampling)**: AI neural upscaling accelerated by hardware XMX engines on Intel Arc GPUs.
+- **Separated Options Menu**: Dedicated **Video** (display, resolution, fps, vsync) and **Advanced Video** (XeSS, FSR, Frame Gen, shadows, AO, SSR, GI) tabs for clean customization.
+- **Intel XeSS (Xe Super Sampling)**: AI neural upscaling accelerated by hardware XMX engines on Intel Arc GPUs (Ultra Performance to Native AA).
 - **AMD FidelityFX FSR 1, FSR 2 (temporal)**, and **SMAA** anti-aliasing.
-- **Custom Shading & Lighting**: Screen-space ambient occlusion (XeGTAO), water reflections, screen-space GI, and high-resolution shadow mapping.
-- **HDR Display Output**: scRGB / HDR10 support.
+- **Contrast-Adaptive Sharpening (RCAS)**: Real-time image clarity adjustment.
+- **Custom Shading & Lighting**: Screen-space ambient occlusion (XeGTAO), water reflections (SSR), screen-space indirect lighting (SSGI), and high-resolution shadow mapping (up to 4x).
+- **HDR Display Output**: scRGB / HDR10 support with peak brightness tuning.
 - **HD Texture Pack Loader**: Direct loading from `textures/hd/`.
+
+### Tools & Utilities
+- **PokeL-Extractor (Standalone ROM Tool)**: Bundled single-file GUI & CLI utility based on LibHac. Inspects NSP/XCI dumps, auto-detects base games, updates (v262144), and DLCs, displays Nintendo Switch game icons, and merges BKTR RomFS patches with real-time speed and ETA.
 
 ### Controls & Input
 - Any modern gamepad via SDL3: Xbox, DualShock 4, DualSense, Nintendo Switch Pro Controller, Steam Deck.
@@ -73,10 +81,23 @@ The game's ARM64 machine code is translated ahead-of-time (AOT) into C and compi
 2. Extract the archive into a writable folder (e.g. `C:\Games\PokeL-ARecomp`).
 3. Prepare your game files:
    - Base game (`.nsp` or `.xci`), the **1.1.1 update** (`.nsp`), and your `prod.keys` dumped from your console.
-4. Launch `lasrecomp.exe` (or `./plarecomp.AppImage`).
+4. Launch `PokeL-ARecomp.exe` (or `./plarecomp.AppImage`).
 5. In the start screen, choose your game folder and click **Set up the game**.
 6. The initial static recompilation takes 10 to 25 minutes depending on your CPU core count (this occurs **only once**).
 7. Click **Play** and enjoy exploring Hisui!
+
+---
+
+## Standalone ROM Extractor (PokeL-Extractor)
+
+Bundled with every release is **PokeL-Extractor** (`PokeL-Extractor.exe`), a standalone Nintendo Switch ROM analysis and extraction utility built with LibHac and C# / .NET 9.
+
+- **Recursive Directory Scanning**: Scans entire directories and subfolders for `.nsp`, `.nsz`, `.xci`, and `.xcz` files.
+- **Automatic Title ID & CNMT Detection**: Identifies whether a dump is a **Base Game**, an **Update** (such as v262144), or **DLC**, even if files have been arbitrarily renamed.
+- **Switch Game Icon Extraction**: Reads embedded JPEG/PNG icons directly from Control NCAs and displays them in the UI.
+- **RomFS & ExeFS Extraction**: Merges BKTR base and update patches automatically into clean directories ready for PokeL-ARecomp.
+- **Real-time Progress & Telemetry**: Reports elapsed time, transfer speed (MB/s), estimated time remaining (ETA), and line-by-line logs.
+- **Dual GUI & CLI Modes**: Run interactively with the modern dark GUI or automate via terminal (`PokeL-Extractor.exe --scan <folder> --export <out>`).
 
 ---
 
@@ -95,12 +116,48 @@ The game's ARM64 machine code is translated ahead-of-time (AOT) into C and compi
 
 ---
 
+## Version History & Changelog
+
+### v0.0.25 (Latest)
+- **Menu Reorganization**: Separated into dedicated **Video** (Display, Resolution, Framerate, VSync) and **Advanced Video** (XeSS, FSR, Frame Gen, Shadows, Ambient Occlusion, SSR, SSGI) tabs.
+- **Explicit VSync Selector**: Direct control over swapchain presentation modes:
+  - *Off (Low Latency / Mailbox)*: Zero vblank tearing, non-blocking acquisition for high refresh rate and Frame Gen.
+  - *On (VSync / 60 Hz - FIFO)*: Standard sync to display vertical refresh rate.
+  - *Off (Unlimited / Immediate)*: Direct unbuffered presentation for raw latency testing.
+- **Frame Generation 30 FPS Cap Resolution**: Fixed double-vblank blocking under FIFO when Frame Gen is engaged, preventing the game loop from dropping to 30 FPS.
+- **PokeL-Extractor Integration**: Standalone ROM extractor bundled directly into release packages and CI artifacts.
+
+### v0.0.24
+- **Release Branding Cleanup**: Renamed application distribution to **PokeL-ARecomp** (`PokeL-ARecomp.exe`).
+- **Official Arceus PE Icon**: Embedded high-resolution (16x16 up to 256x256) Arceus Celestial Wheel icon into Windows PE executable.
+- **Log Streamlining**: Cleared legacy game log messages and aligned engine identifiers.
+- **Intel Arc B580 Xe2 Tuning**: Dedicated 3.1 GB physical VRAM pool unlocked, preventing iGPU 1 GB fallback.
+- **Intel Xeon Multi-Threading**: Dynamic worker thread scaling up to 8 parallel texture deswizzling threads.
+
+### v0.0.23
+- **Crash Fix (`0xc0000005`)**: Moved `dcache` and `jmps` state into per-thread CPU structures, eliminating memory access violations on launch.
+- **Improved Game Loop Reliability**: Normalized initialization lifecycle for sound, filesystem, and NVN graphics.
+
+### v0.0.22
+- **Dynamic 60 FPS Engine**: Implemented dynamic delta-time pacing for *Pokémon Legends: Arceus*, allowing smooth 60 FPS gameplay without double-speed physics.
+
+### v0.0.21
+- **Vulkan HUD Decoupling**: Added `hdr_snapshot` isolation to prevent optical flow ghosting on HUD, minimap, and battle reticles during Frame Generation.
+
+### v0.0.20
+- **Intel XeSS SDK Integration**: Added AI neural upscaling support via Intel XeSS XMX engines and DP4a fallback.
+
+---
+
 ## Credits & Acknowledgements
 
-- **Peiikai**: Creator of [LAS Recomp](https://github.com/peiikai/LASRecomp), the static recompiler, runtime architecture, and Maxwell shader translator.
-- **Hexveil404**: Creator of [PokeZ-ARecomp](https://github.com/Hexveil404/PokeZ-ARecomp), introducing Switch OS HLE services and Pokémon decompilation paradigms.
-- **Ryujinx Project**: Behavioral reference for Switch kernel and NVN GPU execution.
-- **Open-source libraries**: SDL3, FFmpeg, Dear ImGui, Vulkan Memory Allocator, Shaderc, XeGTAO, LibHac, Intel XeSS SDK.
+This project stands on the shoulders of giants. We express our deepest gratitude to the upstream authors and open-source pioneers whose breakthroughs made PokeL-ARecomp possible:
+
+- **[Peiikai](https://github.com/peiikai)**: Creator of [LAS Recomp](https://github.com/peiikai/LASRecomp), who invented the static recompilation architecture, ARM64-to-C ahead-of-time code translation pipeline, fast-memory execution model, and Maxwell-to-SPIR-V shader translation.
+- **[Hexveil404](https://github.com/Hexveil404)**: Creator of [PokeZ-ARecomp](https://github.com/Hexveil404/PokeZ-ARecomp), who extended LAS Recomp to modern Pokémon engine architectures, developed custom Switch OS HLE services, and proved that full Switch Pokémon titles can run natively on PC.
+- **[Thealexbarney](https://github.com/Thealexbarney)**: Creator of [LibHac](https://github.com/Thealexbarney/LibHac), powering our standalone `PokeL-Extractor` ROM analysis and BKTR patch merger.
+- **[Ryujinx Project](https://github.com/Ryujinx/Ryujinx)**: Exceptional behavioral reference and documentation for Nintendo Switch OS kernel and Maxwell NVN graphics behavior.
+- **Open-source libraries**: SDL3, FFmpeg, Dear ImGui, Vulkan Memory Allocator, Shaderc, XeGTAO, AMD FidelityFX, Intel XeSS.
 
 ---
 
