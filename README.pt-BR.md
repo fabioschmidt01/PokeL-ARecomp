@@ -118,7 +118,14 @@ Junto com as releases é distribuído o **PokeL-Extractor** (`PokeL-Extractor.ex
 
 ## Histórico de Versões e Atualizações
 
-### v0.0.25 (Mais Recente)
+### v0.0.26 (Mais Recente)
+- **Correção de Menus F1 Invisíveis / Flicando com Frame Gen**: Resolvido em definitivo o bug onde o menu F1 ficava semitransparente, fantasmagórico ou piscando ao ativar o Gerador de Quadros. A geração de quadros agora é desengatada automaticamente ao abrir o menu de configurações (F1), garantindo interface 100% sólida, estável e nítida.
+- **Persistência de HUD e Overlays na Geração de Quadros**: Adicionada a função `menu_render_repeat` para desenhar contadores de FPS, monitor de desempenho e timers tanto no quadro interpolado quanto no quadro base, eliminando cintilações no HUD durante o jogo.
+- **Pacing Temporal de Apresentação (90-120 FPS Reais)**: Implementado espaçamento de meio-quadro (`dt_half`) entre o quadro interpolado e o quadro base, garantindo que o monitor exiba ambos os quadros sem que um sobrescreva o outro na mailbox da swapchain.
+- **Destravamento Real de FPS (Modo Ilimitado)**: Remoção das pausas de 16,66 ms em `present_pace` e liberação do limitador do delta-time dinâmico até 4,16 ms (240 FPS) quando o VSync é definido como *Desligado (Ilimitado)*. O jogo agora roda acima de 60 FPS com velocidade 1.0x perfeita!
+- **Proteção Contra Sobreposição de Textos na Interface**: Corrigida a colisão de textos em `option_rows` com aplicação de clipping visual entre rótulos e valores, além de simplificação dos nomes das opções de VSync no menu.
+
+### v0.0.25
 - **Divisão do Menu de Vídeo**: Separação completa entre a aba **Vídeo** (exibição, resolução, taxa de quadros e VSync) e a nova aba **Vídeo Avançado** (XeSS, FSR, Geração de Quadros, sombras, oclusão ambiental, reflexos e iluminação indireta).
 - **Seletor Explícito de VSync**: Três opções diretas com recriação instantânea da swapchain Vulkan:
   - *Desligado (Baixa Latência / Mailbox)*: Taxas altas sem tearing de vblank, recomendado para Frame Gen.

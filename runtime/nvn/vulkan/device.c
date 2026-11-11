@@ -1923,11 +1923,23 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         if (win_shot < 0) win_shot = getenv("LARECOMP_WINDOW_SHOT") ? atol(getenv("LARECOMP_WINDOW_SHOT")) : 0;
         bool shot = win_shot && (long)frame + 1 == win_shot;
 
-        if (g_settings.framegen && g_prev_frame_b && g_prev_frame_b->image && g_prev_frame_b != b) {
+        bool fg_active = g_settings.framegen && !menu_is_open() && g_prev_frame_b && g_prev_frame_b->image && g_prev_frame_b != b;
+        static uint64_t prev_present_ns;
+        uint64_t now_ns = SDL_GetTicksNS();
+
+        if (fg_active) {
             // Frame Generation (90-120 FPS): interpolate intermediate frame with HUD Decoupling
             vk_framegen_draw(cb, g_prev_frame_b, b, (float)vx, (float)vy, (float)vw, (float)vh, pv, 0.5f);
             vk_hdr_mark_base();
+            menu_render_repeat((void *)cb);
             vk_frame_end(NULL);
+
+            // Temporal pacing between intermediate and base frame so display scans out both
+            uint64_t dt_half = (prev_present_ns > 0 && now_ns > prev_present_ns) ? (now_ns - prev_present_ns) / 2 : 8333333ull;
+            if (dt_half < 4000000ull) dt_half = 4000000ull;
+            if (dt_half > 16666667ull) dt_half = 16666667ull;
+            plat_sleep_until_ns(SDL_GetTicksNS() + dt_half);
+
             // Present base frame to the next swapchain image
             if (vk_frame_begin(black)) {
                 cb = vk_cmd();
@@ -2016,8 +2028,7 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
                                     uint32_t scene_w, uint32_t scene_h, int scaler);
     extern void perfmon_set_vram_used(float vram_used_mb);
     extern uint64_t vk_cum_exec_ns(void);
-    static uint64_t prev_present_ns, prev_exec_ns, prev_wt_perf[4];
-    uint64_t now_ns = SDL_GetTicksNS();
+    static uint64_t prev_exec_ns, prev_wt_perf[4];
     uint64_t cur_exec = vk_cum_exec_ns();
     uint64_t cur_wt[4];
     for (int i = 0; i < 4; i++) cur_wt[i] = __atomic_load_n(&g_vk_frame_waits[i], __ATOMIC_RELAXED);
@@ -2044,8 +2055,9 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
                  g_settings.upscaler == UPSCALE_XESS ? 3 :
                  g_settings.upscaler == UPSCALE_FSR1 ? 2 : 1;
         perfmon_set_picture(g_vk.sc_extent.width, g_vk.sc_extent.height, b->width, b->height, sw, sh, sc);
-        if (g_settings.framegen && g_prev_frame_b && g_prev_frame_b->image && g_prev_frame_b != b) {
+        if (fg_active) {
             uint64_t half_dt = (now_ns - prev_present_ns) / 2;
+            if (half_dt < 4000000ull) half_dt = 4000000ull;
             perfmon_frame_ex(half_dt, rep * 0.5, gpu_tot * 0.5, pipe_w * 0.5, xlate_w * 0.5, tex_u * 0.5);
             perfmon_frame_ex(half_dt, rep * 0.5, gpu_tot * 0.5, pipe_w * 0.5, xlate_w * 0.5, tex_u * 0.5);
         } else {

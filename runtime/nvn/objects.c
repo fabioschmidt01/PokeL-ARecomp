@@ -989,7 +989,7 @@ static void present_pace(int interval) {
     if (interval != logged) { logged = interval; LOG("[nvn] present interval %d\n", interval); }
     extern int g_out_present_interval;  // (output_scale.c: dynamic resolution's frame budget)
     g_out_present_interval = interval;
-    if (interval <= 0) return;
+    if (interval <= 0 || g_settings.vsync == 2) return;  // Uncapped / Immediate: no sleep pacing
     if (interval > 4) interval = 1;  // (not a sane interval: the console's default)
     uint64_t period = 16666667ull * (uint64_t)interval, now = plat_now_ns();
     if (next > now && next - now <= period) plat_sleep_until_ns(next);

@@ -484,17 +484,17 @@ static void tab_display(bool in_game) {
     {   // Sincronização Vertical (VSync) e Modo de Apresentação
         int vs = g_settings.vsync;
         const char *vs_names[] = {
-            TR("Off (Low latency / Mailbox)", "Desligado (Baixa latência / Mailbox)"),
-            TR("On (VSync / 60 Hz)", "Ligado (VSync / 60 Hz)"),
-            TR("Off (Unlimited / Immediate)", "Desligado (Sem limite / Imediato)")
+            TR("Off (Mailbox)", "Desligado (Mailbox)"),
+            TR("On (VSync 60 Hz)", "Ligado (VSync 60 Hz)"),
+            TR("Off (Uncapped)", "Desligado (Ilimitado)")
         };
-        if (opt_choice(TR("Vertical Sync (VSync)", "Sincronização Vertical (VSync)"), &vs, vs_names, 3, 0,
-                       TR("Off (Low latency): the newest frame is shown at refresh (mailbox) - no tearing, recommended for Frame Generation. "
-                          "On (VSync): each frame waits for display refresh (FIFO). Note: on 60 Hz displays with Frame Gen, FIFO limits game updates to 30 FPS. "
-                          "Off (Unlimited): presents immediately without waiting for screen scanout.",
-                          "Desligado (Baixa latência): o quadro mais recente é exibido na atualização (mailbox) - sem tearing, recomendado para Geração de Quadros. "
-                          "Ligado (VSync): cada quadro espera a atualização da tela (FIFO). Nota: em telas de 60 Hz com Geração de Quadros, FIFO limita o motor a 30 FPS. "
-                          "Desligado (Sem limite): apresenta imediatamente sem esperar o ciclo da tela."))) {
+        if (opt_choice(TR("VSync Mode", "Modo VSync"), &vs, vs_names, 3, 0,
+                       TR("Off (Mailbox): newest frame shown at display refresh - tear-free low latency, optimal for Frame Generation.\n"
+                          "On (VSync 60 Hz): locks presentation to 60 Hz display refresh (FIFO).\n"
+                          "Off (Uncapped): removes all frame rate caps, presenting as fast as the GPU and CPU can push.",
+                          "Desligado (Mailbox): exibe o quadro mais recente no ciclo da tela - sem tearing e baixa latência, ideal para Frame Generation.\n"
+                          "Ligado (VSync 60 Hz): sincroniza com a taxa da tela (FIFO).\n"
+                          "Desligado (Ilimitado): destrava completamente o FPS, exibindo o máximo que a GPU e o CPU puderem empurrar."))) {
             g_settings.vsync = vs;
             g_settings.present_fifo = (vs == 1);
         }
@@ -1685,5 +1685,17 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     void *oc = vk_overlay_begin(cmd);
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), (VkCommandBuffer)oc);  // inside the window image's rendering
     vk_overlay_end(cmd, oc);
+#endif
+}
+
+extern "C" void menu_render_repeat(void *cmd) {
+#ifndef __APPLE__
+    if (g_open.load() || !g_inited) return;
+    ImDrawData *dd = ImGui::GetDrawData();
+    if (dd && dd->Valid && dd->CmdListsCount > 0) {
+        void *oc = vk_overlay_begin(cmd);
+        ImGui_ImplVulkan_RenderDrawData(dd, (VkCommandBuffer)oc);
+        vk_overlay_end(cmd, oc);
+    }
 #endif
 }

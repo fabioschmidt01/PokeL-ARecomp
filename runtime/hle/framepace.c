@@ -145,7 +145,8 @@ uint64_t rt_pla_frame_dt_ns(uint32_t slot, uint64_t default_ns) {
             // Ignore long loading / shader-compile stalls (> 100 ms) so the player doesn't jump ahead
             cur_dt_ns = target_ns;
         } else {
-            if (real_ns < target_ns) real_ns = target_ns;
+            uint64_t min_ns = (g_settings.vsync == 2) ? 4166666ull : target_ns;  // Uncapped allows up to 240 FPS
+            if (real_ns < min_ns) real_ns = min_ns;
             if (real_ns > 50000000ull) real_ns = 50000000ull;  // floor at 20 FPS (50 ms) max step
             cur_dt_ns = cur_dt_ns ? (cur_dt_ns * 3 + real_ns) / 4 : real_ns;
         }

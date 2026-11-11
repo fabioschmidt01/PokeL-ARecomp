@@ -172,11 +172,12 @@ static int row(const char *label, const std::string &value, bool changed, const 
         upper_utf8(t);
     float ty = p.y + (h - fs) * 0.5f;
     ImU32 label_col = off ? IM_COL32(100, 116, 128, 255) : IM_COL32(238, 243, 246, 255);  // (greyed out: clearly dim)
-    dl->AddText(ImVec2(p.x + pad, ty), label_col, t.c_str());
     float right = p.x + w - pad;  // (the value's right edge)
+    float lx = right, rx = right;
     if (arrows && !value.empty()) {  // ◀ value ▶, drawn (the fonts have no arrow glyphs); a click on one steps
         float aw = fs * 0.42f, gap = fs * 0.55f, cy = ty + fs * 0.52f;
-        float rx = right - aw, lx = rx - gap - ImGui::CalcTextSize(value.c_str()).x - gap - aw;
+        rx = right - aw;
+        lx = rx - gap - ImGui::CalcTextSize(value.c_str()).x - gap - aw;
         ImU32 ac = off ? IM_COL32(100, 116, 128, 255) : hov || foc ? kGold : IM_COL32(159, 179, 194, 255);
         dl->AddTriangleFilled(ImVec2(lx, cy), ImVec2(lx + aw, cy - aw * 0.75f), ImVec2(lx + aw, cy + aw * 0.75f), ac);
         dl->AddTriangleFilled(ImVec2(rx + aw, cy), ImVec2(rx, cy - aw * 0.75f), ImVec2(rx, cy + aw * 0.75f), ac);
@@ -195,11 +196,16 @@ static int row(const char *label, const std::string &value, bool changed, const 
         right -= cw + fs * 0.55f;
         if (step == 1) step = 2;  // (Right opens it too)
     }
+    float vw = 0, vx = right;
     if (!value.empty()) {
-        float vw = ImGui::CalcTextSize(value.c_str()).x, vx = right - vw;
+        vw = ImGui::CalcTextSize(value.c_str()).x;
+        vx = right - vw;
         dl->AddText(ImVec2(vx, ty), off ? IM_COL32(100, 116, 128, 255) : warn ? IM_COL32(240, 110, 90, 255)
                                     : changed ? IM_COL32(255, 255, 255, 255) : IM_COL32(194, 209, 219, 255), value.c_str());
     }
+    float label_max_x = (arrows && !value.empty()) ? (lx - 6 * g_scale) : (!value.empty() ? (vx - 6 * g_scale) : (p.x + w - pad));
+    ImVec4 clip_rect(p.x + pad, p.y, label_max_x, p.y + h);
+    dl->AddText(ImGui::GetFont(), fs, ImVec2(p.x + pad, ty), label_col, t.c_str(), NULL, 0.0f, &clip_rect);
     if (dup) ImGui::PopID();
     ImGui::PopID();
     return step;

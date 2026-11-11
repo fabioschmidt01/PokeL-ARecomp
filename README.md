@@ -118,7 +118,14 @@ Bundled with every release is **PokeL-Extractor** (`PokeL-Extractor.exe`), a sta
 
 ## Version History & Changelog
 
-### v0.0.25 (Latest)
+### v0.0.26 (Latest)
+- **F1 Menu Stability & Transparency Bug Fix**: Completely resolved the issue where opening F1 menus with Frame Generation made options semi-transparent, ghosted, or flickering. Frame Generation now automatically disengages while inside the pause/settings menu, providing rock-solid, fully opaque UI.
+- **HUD & Overlay Frame Generation Persistence**: Implemented `menu_render_repeat` so in-game HUD elements (FPS counter, performance monitor, timers) are drawn onto both generated and base frames, eliminating HUD flicker during gameplay.
+- **Temporal Presentation Pacing for Frame Generation**: Added half-frame pacing (`dt_half`) between intermediate and base frame presentations, ensuring monitors actually scan out both frames (reaching true 90–120 FPS output) rather than discarding them in swapchain mailboxes.
+- **True Uncapped FPS Support**: Unlocked presentation pacing in `present_pace` and scaled dynamic delta-time floor down to 4.16 ms (240 FPS) when VSync is set to *Off (Uncapped)*, enabling framerates to soar beyond 60 FPS without game speed acceleration.
+- **UI Text Overlap Protection**: Fixed text collision in `option_rows` by enforcing strict clipping boundaries between option labels, navigation chevrons, and value texts, while shortening VSync options for crystal-clear readability.
+
+### v0.0.25
 - **Menu Reorganization**: Separated into dedicated **Video** (Display, Resolution, Framerate, VSync) and **Advanced Video** (XeSS, FSR, Frame Gen, Shadows, Ambient Occlusion, SSR, SSGI) tabs.
 - **Explicit VSync Selector**: Direct control over swapchain presentation modes:
   - *Off (Low Latency / Mailbox)*: Zero vblank tearing, non-blocking acquisition for high refresh rate and Frame Gen.
