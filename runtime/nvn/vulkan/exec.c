@@ -7045,6 +7045,10 @@ static void draw_(CmdRec *r, bool indexed) {
     } else {
         uint32_t itype = (uint32_t)r->x[1];
         uint64_t iaddr = r->x[3];
+        if (!iaddr || iaddr < 0x1000 || !count) {
+            SKIP(SK_DEBUG_SKIP);
+            return;
+        }
         base_vertex = (int32_t)r->x[4];
         base_inst = (uint32_t)r->x[5];
         inst = (uint32_t)r->x[6] ? (uint32_t)r->x[6] : 1;
@@ -8965,6 +8969,7 @@ void vk_framegen_draw(VkCommandBuffer cb, TexBackend *prev, TexBackend *curr, fl
 
 // (hdr_snaps above) t's image now -> its copy: the copy keeps t's format, read raw like t (raw_view)
 static void hdr_snapshot(NvnTexture *t) {
+    if (!t || !t->backend) return;
     TexBackend *b = t->backend;
     if (!b->image || b->aspect != VK_IMAGE_ASPECT_COLOR_BIT || b->levels != 1 || b->layers != 1 || b->samples > 1) return;
     static int next;

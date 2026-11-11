@@ -119,6 +119,7 @@ Bundled with every release is **PokeL-Extractor** (`PokeL-Extractor.exe`), a sta
 ## Version History & Changelog
 
 ### v0.0.26 (Latest)
+- **Stability Fix for Unmapped Index Buffers (Crash 0x80)**: Added safety bounds checking on guest index buffer addresses (`iaddr < 0x1000` / null count) in indexed draw calls, preventing access violation `c0000005 accessing 0x80` during extended gameplay sessions.
 - **F1 Menu Stability & Transparency Bug Fix**: Completely resolved the issue where opening F1 menus with Frame Generation made options semi-transparent, ghosted, or flickering. Frame Generation now automatically disengages while inside the pause/settings menu, providing rock-solid, fully opaque UI.
 - **HUD & Overlay Frame Generation Persistence**: Implemented `menu_render_repeat` so in-game HUD elements (FPS counter, performance monitor, timers) are drawn onto both generated and base frames, eliminating HUD flicker during gameplay.
 - **Temporal Presentation Pacing for Frame Generation**: Added half-frame pacing (`dt_half`) between intermediate and base frame presentations, ensuring monitors actually scan out both frames (reaching true 90–120 FPS output) rather than discarding them in swapchain mailboxes.

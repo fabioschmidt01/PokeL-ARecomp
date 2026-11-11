@@ -1836,6 +1836,9 @@ static const char *pp_text(void) {
 void backend_present_now(NvnTexture *t, uint64_t frame) {
     if (pp_on < 0) pp_on = getenv("LARECOMP_VK_PROF") != NULL;
     if (pp_on) pp_t = SDL_GetTicksNS();
+    static uint64_t prev_present_ns;
+    uint64_t now_ns = SDL_GetTicksNS();
+    bool fg_active = false;
     TexBackend *b = vk_tex(t, true);
     b->presented = true;
     vk_end_pass();
@@ -1923,9 +1926,7 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         if (win_shot < 0) win_shot = getenv("LARECOMP_WINDOW_SHOT") ? atol(getenv("LARECOMP_WINDOW_SHOT")) : 0;
         bool shot = win_shot && (long)frame + 1 == win_shot;
 
-        bool fg_active = g_settings.framegen && !menu_is_open() && g_prev_frame_b && g_prev_frame_b->image && g_prev_frame_b != b;
-        static uint64_t prev_present_ns;
-        uint64_t now_ns = SDL_GetTicksNS();
+        fg_active = g_settings.framegen && !menu_is_open() && g_prev_frame_b && g_prev_frame_b->image && g_prev_frame_b != b;
 
         if (fg_active) {
             // Frame Generation (90-120 FPS): interpolate intermediate frame with HUD Decoupling

@@ -119,6 +119,7 @@ Junto com as releases é distribuído o **PokeL-Extractor** (`PokeL-Extractor.ex
 ## Histórico de Versões e Atualizações
 
 ### v0.0.26 (Mais Recente)
+- **Correção de Crash de Ponteiro Nulo / 0x80 em Sessões Longas**: Implementada proteção contra buffers de índices de geometria não mapeados (`iaddr < 0x1000` / contagem nula) em chamadas de desenho indexado, prevenindo a violação de acesso `c0000005 accessing 0x80` após longos períodos de jogo contínuo.
 - **Correção de Menus F1 Invisíveis / Flicando com Frame Gen**: Resolvido em definitivo o bug onde o menu F1 ficava semitransparente, fantasmagórico ou piscando ao ativar o Gerador de Quadros. A geração de quadros agora é desengatada automaticamente ao abrir o menu de configurações (F1), garantindo interface 100% sólida, estável e nítida.
 - **Persistência de HUD e Overlays na Geração de Quadros**: Adicionada a função `menu_render_repeat` para desenhar contadores de FPS, monitor de desempenho e timers tanto no quadro interpolado quanto no quadro base, eliminando cintilações no HUD durante o jogo.
 - **Pacing Temporal de Apresentação (90-120 FPS Reais)**: Implementado espaçamento de meio-quadro (`dt_half`) entre o quadro interpolado e o quadro base, garantindo que o monitor exiba ambos os quadros sem que um sobrescreva o outro na mailbox da swapchain.
