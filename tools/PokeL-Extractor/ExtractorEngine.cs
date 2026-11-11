@@ -213,93 +213,149 @@ public class ExtractorEngine
                     }
                     OnLog?.Invoke(LogType.Success, "Extração do ExeFS concluída com sucesso!");
 
-                    // 5. Preparação das imagens RomFS e DLCs
-                    var images = new List<(IStorage st, string path, string desc)>();
+                    // 5. Preparação dos sistemas de arquivos RomFS e DLCs
+                    string romfsDir = Path.Combine(outDir, "romfs");
+                    Directory.CreateDirectory(romfsDir);
+
+                    var filesystemsToExtract = new List<(IFileSystem fs, string desc)>();
+
                     if (updateNca != null)
                     {
-                        OnLog?.Invoke(LogType.Info, "Preparando fusão BKTR: RomFS Base + Patch de Atualização...");
-                        images.Add((baseNca.OpenStorageWithPatch(updateNca, NcaSectionType.Data, IntegrityCheckLevel.None),
-                                    Path.Combine(outDir, "romfs.bin"),
-                                    "RomFS com Update 1.1.1"));
+                        OnLog?.Invoke(LogType.Info, "Montando partição RomFS com fusão BKTR (Jogo Base + Update 1.1.1)...");
+                        filesystemsToExtract.Add((baseNca.OpenFileSystemWithPatch(updateNca, NcaSectionType.Data, IntegrityCheckLevel.None),
+                                                  "RomFS (Base + Update)"));
                     }
                     else
                     {
-                        OnLog?.Invoke(LogType.Info, "Preparando RomFS Base (sem atualização)...");
-                        images.Add((baseNca.OpenStorage(NcaSectionType.Data, IntegrityCheckLevel.None),
-                                    Path.Combine(outDir, "romfs.bin"),
-                                    "RomFS Base"));
+                        OnLog?.Invoke(LogType.Info, "Montando partição RomFS Base (sem atualização)...");
+                        filesystemsToExtract.Add((baseNca.OpenFileSystem(NcaSectionType.Data, IntegrityCheckLevel.None),
+                                                  "RomFS Base"));
                     }
 
+                    // Se houver DLCs, adicionar cada uma ordenada por TitleId (sobreposição LayeredFS)
                     if (dlcNcas.Count > 0)
                     {
-                        string aocDir = Path.Combine(outDir, "aoc");
-                        Directory.CreateDirectory(aocDir);
-                        foreach (var d in dlcNcas)
+                        var sortedDlcs = dlcNcas.OrderBy(d => d.Header.TitleId).ToList();
+                        foreach (var d in sortedDlcs)
                         {
-                            images.Add((d.OpenStorage(NcaSectionType.Data, IntegrityCheckLevel.None),
-                                        Path.Combine(aocDir, $"{d.Header.TitleId:x16}.bin"),
-                                        $"DLC {d.Header.TitleId:x16}"));
+                            try
+                            {
+                                if (d.CanOpenSection(NcaSectionType.Data))
+                                {
+                                    OnLog?.Invoke(LogType.Info, $"Montando camada DLC: {d.Header.TitleId:x16}...");
+                                    filesystemsToExtract.Add((d.OpenFileSystem(NcaSectionType.Data, IntegrityCheckLevel.None),
+                                                              $"DLC {d.Header.TitleId:x16}"));
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                OnLog?.Invoke(LogType.Warning, $"Não foi possível abrir partição de dados da DLC {d.Header.TitleId:x16}: {ex.Message}");
+                            }
                         }
                     }
 
-                    // 6. Cálculo do tamanho total
+                    // 6. Indexação e cálculo do total de bytes e arquivos
+                    OnLog?.Invoke(LogType.Info, "Indexando arquivos do RomFS para cálculo de progresso...");
                     long totalBytes = 0;
-                    foreach (var (st, _, _) in images)
+                    int totalFiles = 0;
+                    var extractTasks = new List<(IFileSystem fs, DirectoryEntryEx entry)>();
+
+                    foreach (var (fs, desc) in filesystemsToExtract)
                     {
-                        st.GetSize(out long s).ThrowIfFailure();
-                        totalBytes += s;
+                        ct.ThrowIfCancellationRequested();
+                        foreach (var entry in fs.EnumerateEntries("/", "*", SearchOptions.RecurseSubdirectories))
+                        {
+                            if (entry.Type == DirectoryEntryType.File)
+                            {
+                                totalBytes += entry.Size;
+                                totalFiles++;
+                                extractTasks.Add((fs, entry));
+                            }
+                        }
                     }
 
-                    OnLog?.Invoke(LogType.Info, $"Total de dados a serem gerados: {SwitchPackageInfo.FormatBytes(totalBytes)}");
+                    OnLog?.Invoke(LogType.Info, $"Total de arquivos: {totalFiles} ({SwitchPackageInfo.FormatBytes(totalBytes)})");
 
-                    // 7. Streaming com barra de progresso, velocidade e ETA
+                    // 7. Extração com streaming eficiente, barra de progresso, velocidade e ETA
                     long doneBytes = 0;
-                    var buf = new byte[8 << 20]; // 8 MB buffer
+                    int fileIndex = 0;
+                    var buf = new byte[4 << 20]; // 4 MB buffer por bloco
                     var sw = Stopwatch.StartNew();
                     long lastDone = 0;
                     var lastTime = sw.Elapsed;
 
-                    foreach (var (st, path, desc) in images)
+                    foreach (var (fs, entry) in extractTasks)
                     {
                         ct.ThrowIfCancellationRequested();
-                        OnLog?.Invoke(LogType.Info, $"Gravando {desc} -> {Path.GetFileName(path)}...");
-                        st.GetSize(out long size).ThrowIfFailure();
+                        fileIndex++;
 
-                        using var f = File.Create(path + ".part");
-                        for (long off = 0; off < size; off += buf.Length)
+                        string rel = entry.FullPath.TrimStart('/');
+                        string targetPath = Path.Combine(romfsDir, rel.Replace('/', Path.DirectorySeparatorChar));
+                        string? dir = Path.GetDirectoryName(targetPath);
+                        if (dir != null && !Directory.Exists(dir))
                         {
-                            ct.ThrowIfCancellationRequested();
-                            int n = (int)Math.Min(buf.Length, size - off);
-                            st.Read(off, buf.AsSpan(0, n)).ThrowIfFailure();
-                            f.Write(buf, 0, n);
-                            doneBytes += n;
-
-                            var now = sw.Elapsed;
-                            var dt = (now - lastTime).TotalSeconds;
-                            double speedMBs = 0;
-                            if (dt >= 0.5)
-                            {
-                                speedMBs = (doneBytes - lastDone) / (1024.0 * 1024.0) / dt;
-                                lastDone = doneBytes;
-                                lastTime = now;
-                            }
-
-                            TimeSpan eta = speedMBs > 0 
-                                ? TimeSpan.FromSeconds((totalBytes - doneBytes) / (speedMBs * 1024 * 1024))
-                                : TimeSpan.Zero;
-
-                            OnProgress?.Invoke(new ProgressInfo
-                            {
-                                BytesDone = doneBytes,
-                                TotalBytes = totalBytes,
-                                SpeedMBs = speedMBs,
-                                Operation = desc,
-                                Eta = eta
-                            });
+                            Directory.CreateDirectory(dir);
                         }
-                        f.Close();
-                        File.Move(path + ".part", path, true);
-                        OnLog?.Invoke(LogType.Success, $"Gravação concluída: {Path.GetFileName(path)} ({SwitchPackageInfo.FormatBytes(size)})");
+
+                        using var f = new UniqueRef<IFile>();
+                        var res = fs.OpenFile(ref f.Ref, entry.FullPath.ToU8Span(), OpenMode.Read);
+                        if (res.IsFailure())
+                        {
+                            OnLog?.Invoke(LogType.Warning, $"Aviso: Não foi possível ler romfs/{rel}: {res.ToString()}");
+                            continue;
+                        }
+
+                        f.Get.GetSize(out long fileSize).ThrowIfFailure();
+
+                        using (var outStream = File.Create(targetPath))
+                        {
+                            long offset = 0;
+                            while (offset < fileSize)
+                            {
+                                ct.ThrowIfCancellationRequested();
+                                int toRead = (int)Math.Min(buf.Length, fileSize - offset);
+                                f.Get.Read(out long bytesRead, offset, buf.AsSpan(0, toRead)).ThrowIfFailure();
+                                if (bytesRead <= 0) break;
+
+                                outStream.Write(buf, 0, (int)bytesRead);
+                                offset += bytesRead;
+                                doneBytes += bytesRead;
+
+                                var now = sw.Elapsed;
+                                var dt = (now - lastTime).TotalSeconds;
+                                double speedMBs = 0;
+                                if (dt >= 0.5)
+                                {
+                                    speedMBs = (doneBytes - lastDone) / (1024.0 * 1024.0) / dt;
+                                    lastDone = doneBytes;
+                                    lastTime = now;
+                                }
+
+                                TimeSpan eta = speedMBs > 0
+                                    ? TimeSpan.FromSeconds((totalBytes - doneBytes) / (speedMBs * 1024 * 1024))
+                                    : TimeSpan.Zero;
+
+                                OnProgress?.Invoke(new ProgressInfo
+                                {
+                                    BytesDone = doneBytes,
+                                    TotalBytes = totalBytes,
+                                    SpeedMBs = speedMBs,
+                                    Operation = $"[{fileIndex}/{totalFiles}] romfs/{rel}",
+                                    Eta = eta
+                                });
+                            }
+                        }
+
+                        if (fileIndex % 100 == 0 || fileIndex == totalFiles)
+                        {
+                            OnLog?.Invoke(LogType.Info, $"Extraindo [{fileIndex}/{totalFiles}]: romfs/{rel} ({SwitchPackageInfo.FormatBytes(fileSize)})");
+                        }
+                    }
+
+                    // Liberar filesystems
+                    foreach (var (fs, _) in filesystemsToExtract)
+                    {
+                        fs.Dispose();
                     }
 
                     sw.Stop();
