@@ -480,32 +480,26 @@ static void tab_display(bool in_game) {
                                    TR("Running at 30 fps: this PC didn't keep 60 fps.", "Rodando a 30 fps: este PC não segurou 60 fps."));
         }
     }
-    {
-        int fg = g_settings.framegen ? 1 : 0;
-        const char *fg_rates[] = {TR("Off (1x)", "Desligado (1x)"), TR("On (2x - 90/120 FPS)", "Ligado (2x - 90/120 FPS)")};
-        if (opt_choice(TR("Frame generation", "Geração de quadros"), &fg, fg_rates, 2, 0,
-                       TR("Interpolates intermediate frames using Intel Arc / GPU optical flow & temporal pacing (90-120 FPS). "
-                          "Smooths gameplay without altering game logic clock.",
-                          "Interpola quadros intermediários usando fluxo óptico e estimativa temporal da GPU (90-120 FPS). "
-                          "Garante máxima fluidez sem alterar a velocidade do jogo.")))
-            g_settings.framegen = fg == 1;
-
-        opt_toggle(TR("HUD Decoupling", "Desacoplamento de HUD"), &g_settings.hud_decoupling, true,
-                   TR("Isolates 3D scene from 2D interface (minimap, HP bars, text, crosshairs) via hdr_snapshot. "
-                      "Keeps interface crisp and eliminates ghosting artifacts during frame generation.",
-                      "Isola a cena 3D da interface 2D (minimapa, barras de vida, textos, mira) via hdr_snapshot. "
-                      "Mantém a interface nítida e elimina artefatos de fantasma durante a geração de quadros."));
+#ifndef __APPLE__
+    {   // Sincronização Vertical (VSync) e Modo de Apresentação
+        int vs = g_settings.vsync;
+        const char *vs_names[] = {
+            TR("Off (Low latency / Mailbox)", "Desligado (Baixa latência / Mailbox)"),
+            TR("On (VSync / 60 Hz)", "Ligado (VSync / 60 Hz)"),
+            TR("Off (Unlimited / Immediate)", "Desligado (Sem limite / Imediato)")
+        };
+        if (opt_choice(TR("Vertical Sync (VSync)", "Sincronização Vertical (VSync)"), &vs, vs_names, 3, 0,
+                       TR("Off (Low latency): the newest frame is shown at refresh (mailbox) - no tearing, recommended for Frame Generation. "
+                          "On (VSync): each frame waits for display refresh (FIFO). Note: on 60 Hz displays with Frame Gen, FIFO limits game updates to 30 FPS. "
+                          "Off (Unlimited): presents immediately without waiting for screen scanout.",
+                          "Desligado (Baixa latência): o quadro mais recente é exibido na atualização (mailbox) - sem tearing, recomendado para Geração de Quadros. "
+                          "Ligado (VSync): cada quadro espera a atualização da tela (FIFO). Nota: em telas de 60 Hz com Geração de Quadros, FIFO limita o motor a 30 FPS. "
+                          "Desligado (Sem limite): apresenta imediatamente sem esperar o ciclo da tela."))) {
+            g_settings.vsync = vs;
+            g_settings.present_fifo = (vs == 1);
+        }
     }
-    {   // (runtime/nvn/vulkan/textures.c vk_sampler_settings: every sampler made again, at once)
-        int tf = g_settings.aniso16 ? 1 : 0;
-        const char *tfs[] = {TR("Game's", "Do jogo"), TR("High", "Alta")};
-        if (opt_choice(TR("Texture filtering", "Filtragem de texturas"), &tf, tfs, 2, 0,
-                       TR("High: 16x anisotropic and trilinear filtering - the ground and walls stay sharp at a distance and "
-                          "at grazing angles, with no visible bands where their detail steps down. Game's: as on the Switch.",
-                          "Alta: filtragem anisotrópica 16x e trilinear - o chão e as paredes ficam nítidos de longe e em "
-                          "ângulos rasos, sem faixas visíveis onde o detalhe diminui. Do jogo: como no Switch.")))
-            g_settings.aniso16 = tf == 1;
-    }
+#endif
 #ifndef __APPLE__
     {   // HDR output (runtime/nvn/vulkan/device.c create_swapchain, exec.c vk_hdr_encode): applies at once
         bool avail = vk_hdr_state() > 0;
@@ -538,22 +532,6 @@ static void tab_display(bool in_game) {
         }
     }
 #endif
-#ifndef __APPLE__
-    {   // Frame pacing (runtime/nvn/vulkan/device.c present_mode): a new swapchain at once
-        int fp = g_settings.present_fifo ? 1 : 0;
-        const char *fps_[] = {TR("Standard", "Padrão"), TR("Smooth", "Suave")};
-        if (opt_choice(TR("Frame pacing", "Ritmo dos quadros"), &fp, fps_, 2, 0,
-                       TR("Smooth: every frame waits for its own refresh of the display (FIFO). Try it if the game "
-                          "sometimes stutters for a few seconds while the counter still shows 60 fps. Standard: the "
-                          "newest frame is shown at each refresh (mailbox) - keeps the game at full speed when Windows "
-                          "is slow to show the window (screen recording, a busy desktop).",
-                          "Suave: cada quadro espera a sua própria atualização da tela (FIFO). Experimente se o jogo às "
-                          "vezes engasga por alguns segundos enquanto o contador ainda mostra 60 fps. Padrão: o quadro mais "
-                          "novo aparece a cada atualização (mailbox) - mantém o jogo na velocidade total quando o Windows "
-                          "demora para mostrar a janela (gravação de tela, área de trabalho ocupada).")))
-            g_settings.present_fifo = fp == 1;
-    }
-#endif
     {   // Pokémon Z-A's dynamic resolution (runtime/nvn/vulkan/exec.c vk_counter_mode)
         extern bool g_za_frame_hook;
         if (g_za_frame_hook) {
@@ -582,16 +560,6 @@ static void tab_display(bool in_game) {
                               "~25 fps em vez de ~12). Na base: 1080p. Auto escolhe portátil no Steam Deck.")))
                 g_settings.opmode = hh;
         }
-    }
-    {   // HD texture pack (textures/hd: runtime/nvn/vulkan/textures.c hd_switch, tools/za/hd_pack.py): switches at once
-        int tx = g_settings.tex_hd ? 1 : 0;
-        const char *tex[] = {TR("Original", "Originais"), "HD"};
-        if (opt_choice(TR("Textures", "Texturas"), &tx, tex, 2, 1,
-                       TR("Original: the game's own. HD: the HD texture pack (textures/hd), where it has a texture - "
-                          "sharper, more GPU memory.",
-                          "Originais: as do próprio jogo. HD: o pacote de texturas HD (textures/hd), onde ele tiver a "
-                          "textura - mais nítido, usa mais memória da GPU.")))
-            g_settings.tex_hd = tx == 1;
     }
 
     opt_section(TR("Rendering", "Renderização"));
@@ -630,6 +598,14 @@ static void tab_display(bool in_game) {
         if (opt_choice(TR("Internal resolution", "Resolução interna"), &ri, res, NRES, rdef, d, false))
             g_settings.res_mode = res_mode[ri], g_settings.res_auto = false;
     }
+    opt_end();
+}
+
+static void tab_video_advanced(bool in_game) {
+    float scale = ImGui::GetFontSize() / 34;
+    bool la = g_game_is_la && menu_la_tabs;
+    opt_begin("##video_adv", scale);
+    opt_section(TR("Upscaling & Anti-Aliasing", "Upscaling e Anti-Aliasing"));
     {   // each OS's own upscaler next to bilinear (UPSCALE_SHARP: MetalFX on macOS, AMD FSR 1 / Intel XeSS on Windows)
 #ifdef __APPLE__
         const char *ups[] = {TR("Bilinear", "Bilinear"), "MetalFX"};
@@ -721,6 +697,44 @@ static void tab_display(bool in_game) {
                       "Alta: sempre, mais forte a cada passo."));
     }
 #endif
+    {   // Frame Generation & HUD Decoupling
+        int fg = g_settings.framegen ? 1 : 0;
+        const char *fg_rates[] = {TR("Off (1x)", "Desligado (1x)"), TR("On (2x - 90/120 FPS)", "Ligado (2x - 90/120 FPS)")};
+        if (opt_choice(TR("Frame generation", "Geração de quadros"), &fg, fg_rates, 2, 0,
+                       TR("Interpolates intermediate frames using Intel Arc / GPU optical flow & temporal pacing (90-120 FPS). "
+                          "Smooths gameplay without altering game logic clock. Automatically selects Mailbox presentation to prevent 30 FPS display lock.",
+                          "Interpola quadros intermediários usando fluxo óptico e estimativa temporal da GPU (90-120 FPS). "
+                          "Garante máxima fluidez sem alterar a velocidade do jogo. Ativa automaticamente apresentação Mailbox para não travar em 30 FPS.")))
+            g_settings.framegen = fg == 1;
+
+        opt_toggle(TR("HUD Decoupling", "Desacoplamento de HUD"), &g_settings.hud_decoupling, true,
+                   TR("Isolates 3D scene from 2D interface (minimap, HP bars, text, crosshairs) via hdr_snapshot. "
+                      "Keeps interface crisp and eliminates ghosting artifacts during frame generation.",
+                      "Isola a cena 3D da interface 2D (minimapa, barras de vida, textos, mira) via hdr_snapshot. "
+                      "Mantém a interface nítida e elimina artefatos de fantasma durante a geração de quadros."));
+    }
+
+    opt_section(TR("Graphics Quality & Textures", "Qualidade Gráfica e Texturas"));
+    {   // HD texture pack (textures/hd: runtime/nvn/vulkan/textures.c hd_switch, tools/za/hd_pack.py): switches at once
+        int tx = g_settings.tex_hd ? 1 : 0;
+        const char *tex[] = {TR("Original", "Originais"), "HD"};
+        if (opt_choice(TR("Textures", "Texturas"), &tx, tex, 2, 1,
+                       TR("Original: the game's own. HD: the HD texture pack (textures/hd), where it has a texture - "
+                          "sharper, more GPU memory.",
+                          "Originais: as do próprio jogo. HD: o pacote de texturas HD (textures/hd), onde ele tiver a "
+                          "textura - mais nítido, usa mais memória da GPU.")))
+            g_settings.tex_hd = tx == 1;
+    }
+    {   // (runtime/nvn/vulkan/textures.c vk_sampler_settings: every sampler made again, at once)
+        int tf = g_settings.aniso16 ? 1 : 0;
+        const char *tfs[] = {TR("Game's", "Do jogo"), TR("High", "Alta")};
+        if (opt_choice(TR("Texture filtering", "Filtragem de texturas"), &tf, tfs, 2, 0,
+                       TR("High: 16x anisotropic and trilinear filtering - the ground and walls stay sharp at a distance and "
+                          "at grazing angles, with no visible bands where their detail steps down. Game's: as on the Switch.",
+                          "Alta: filtragem anisotrópica 16x e trilinear - o chão e as paredes ficam nítidos de longe e em "
+                          "ângulos rasos, sem faixas visíveis onde o detalhe diminui. Do jogo: como no Switch.")))
+            g_settings.aniso16 = tf == 1;
+    }
     {   // GTAO (vulkan/exec.c gtao_*): Pokémon Z-A has no ambient occlusion of its own
         const char *ao[] = {TR("Off", "Desligado"), TR("Low", "Baixa"), TR("Medium", "Média"), TR("High", "Alta")};
         opt_choice(TR("Ambient occlusion", "Oclusão ambiente"), &g_settings.gtao, ao, 4, 0,
@@ -1114,17 +1128,17 @@ static void focus_check(bool down, bool up, bool any_down, int focused_tab, int 
 static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     // (id: the page; -1 = Prelaunch)
     struct Tab { const char *name; int id; bool on; };
-    Tab tabs[12];
+    Tab tabs[16];
     int ntabs = 0;
-    // Pokémon Z-A (ZA Recomp's start screen, or the game loaded): Controls, Video, Audio, Game, Quit. Link's Awakening
+    // Pokémon Z-A (ZA Recomp's start screen, or the game loaded): Controls, Video, Advanced Video, Audio, Game, Quit. Link's Awakening
     // keeps its own set (randomizer, cheats, warp, save editor...). (ids stay: test hooks)
     menu_la_tabs = in_game && g_game_is_la;
     if (prelaunch) tabs[ntabs++] = {TR("Files", "Arquivos"), -1, true};
     if (!menu_la_tabs) {
-        const char *names[] = {TR("Controls", "Controles"), TR("Video", "Vídeo"), TR("Audio", "Áudio"), TR("Game", "Jogo"),
-                               TR("Quit", "Sair")};
-        static const int ids[] = {8, 0, 1, 10, 9};
-        for (int i = 0; i < 5; i++)
+        const char *names[] = {TR("Controls", "Controles"), TR("Video", "Vídeo"), TR("Advanced Video", "Vídeo Avançado"),
+                               TR("Audio", "Áudio"), TR("Game", "Jogo"), TR("Quit", "Sair")};
+        static const int ids[] = {8, 0, 11, 1, 10, 9};
+        for (int i = 0; i < 6; i++)
             if (ids[i] != 9 || !prelaunch) tabs[ntabs++] = {names[i], ids[i], true};
     } else {
         static const char *names[] = {"Video", "Audio", "Save Editor", "Randomizer", "Warp", "Cheats", "Gameplay",
@@ -1236,6 +1250,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 switch (t.id) {
                 case -1: prelaunch(scale); break;
                 case 0: tab_display(in_game); break;
+                case 11: tab_video_advanced(in_game); break;
                 case 1: tab_audio(); break;
                 case 2:
                     if (game_in_play()) save_editor_draw(scale);
@@ -1430,7 +1445,7 @@ static void perfmon_draw(const ImVec2 &display, float scale) {
             snprintf(v[4], sizeof v[4], "%s",
                      g_settings.framegen ? (g_settings.fps60 ? "120 FPS (FG 2x)" : "60 FPS (FG 2x)") :
                      (g_settings.fps60 ? "60 FPS" : "30 FPS"));
-            snprintf(v[5], sizeof v[5], "%s", g_settings.present_fifo ? "VSync" : TR("Low latency", "Baixa latência"));
+            snprintf(v[5], sizeof v[5], "%s", g_settings.vsync == 1 ? "VSync (FIFO)" : g_settings.vsync == 2 ? TR("Unlimited", "Sem limite") : TR("Low latency", "Baixa latência"));
 
             const char *labels[6] = {
                 TR("Window", "Janela"),

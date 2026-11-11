@@ -100,9 +100,17 @@ bash tools/zig_slim.sh $FLAGS
 dotnet publish tools/zaimport -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true \
     -p:EnableCompressionInSingleFile=true -p:DebugType=none -o build/zaimport > /dev/null
 
+# 4b. the standalone Switch ROM extractor (PokeL-Extractor)
+if [ -d tools/PokeL-Extractor ]; then
+    echo "Publishing PokeL-Extractor..."
+    dotnet publish tools/PokeL-Extractor/PokeLExtractor.csproj -c Release -r win-x64 --self-contained true \
+        -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o build/PokeL-Extractor
+fi
+
 # 5. the folder
 rm -rf build/dist-za && mkdir -p "$D/gamelib-src" "$D/zaimport"
 cp $B/PokeL-ARecomp.exe $B/PokeL-ARecomp.dll.a "$D/"
+[ -f build/PokeL-Extractor/PokeL-Extractor.exe ] && cp build/PokeL-Extractor/PokeL-Extractor.exe "$D/"
 cp -R build/helper/lasgen "$D/"
 cp -R build/helper/zaprompts "$D/"
 cp third_party/ooz/COPYING "$D/zaprompts/COPYING-GPLv3.txt"

@@ -976,26 +976,39 @@ void vk_pipeline_cache_save(void) {
 
 // ================================================================== swapchain
 static bool present_fifo_made;  // (the Frame pacing setting the swapchain was made with: vk_frame_begin)
+static VkPresentModeKHR present_mode_made = VK_PRESENT_MODE_MAX_ENUM_KHR;
 static VkPresentModeKHR present_mode(void) {
-    present_fifo_made = g_settings.present_fifo;
-    if (g_present_fifo) return VK_PRESENT_MODE_FIFO_KHR;  // (present_watch: the display stopped taking the frames twice)
+    if (g_present_fifo && !g_settings.framegen && (g_settings.vsync == 1 || g_settings.present_fifo)) {
+        return VK_PRESENT_MODE_FIFO_KHR;  // (present_watch: the display stopped taking the frames twice)
+    }
     // MAILBOX by default: the game paces itself (vi.c's emulated 60 Hz vsync), and with FIFO every submission
     // queued behind the one waiting for a window image, so the game's fence waits followed the presentation engine:
     // a throttled / captured / busy compositor slowed the whole game (4-21 fps with the GPU mostly idle; mailbox:
     // 60). No tearing. LARECOMP_VK_PRESENT=fifo|immediate|mailbox to choose.
-    // F1 > Video > Frame pacing Smooth: FIFO. With MAILBOX the game's own 60 Hz clock (vi.c) and the display's drift
-    // apart, and while they cross, frames are dropped and shown twice for a few seconds at a steady 60 fps (judder
-    // running through the city); FIFO shows every frame on its own refresh.
+    // Frame pacing / VSync:
+    // - Off (Mailbox / Low latency): tear-free, non-blocking presentation. Essential for Frame Generation (90-120 FPS).
+    // - On (VSync / FIFO): standard vertical sync. Note: with Frame Generation on 60 Hz monitors, FIFO forces 30 FPS.
+    // - Off (Immediate / Uncapped): lowest latency, direct swapchain blit.
     const char *e = ENV("LARECOMP_VK_PRESENT");
-    VkPresentModeKHR want = !e ? (g_settings.present_fifo ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_MAILBOX_KHR)
-                          : !strcmp(e, "mailbox") ? VK_PRESENT_MODE_MAILBOX_KHR
-                          : !strcmp(e, "immediate") ? VK_PRESENT_MODE_IMMEDIATE_KHR : VK_PRESENT_MODE_FIFO_KHR;
+    VkPresentModeKHR want;
+    if (e) {
+        want = !strcmp(e, "mailbox") ? VK_PRESENT_MODE_MAILBOX_KHR
+             : !strcmp(e, "immediate") ? VK_PRESENT_MODE_IMMEDIATE_KHR : VK_PRESENT_MODE_FIFO_KHR;
+    } else if (g_settings.framegen) {
+        // Frame Generation requires non-blocking presentations. If user requested IMMEDIATE, use it; otherwise MAILBOX.
+        want = (g_settings.vsync == 2) ? VK_PRESENT_MODE_IMMEDIATE_KHR : VK_PRESENT_MODE_MAILBOX_KHR;
+    } else {
+        if (g_settings.vsync == 1 || g_settings.present_fifo) want = VK_PRESENT_MODE_FIFO_KHR;
+        else if (g_settings.vsync == 2) want = VK_PRESENT_MODE_IMMEDIATE_KHR;
+        else want = VK_PRESENT_MODE_MAILBOX_KHR;
+    }
     uint32_t n = 0;
     vkGetPhysicalDeviceSurfacePresentModesKHR(g_vk.phys, g_vk.surface, &n, NULL);
     VkPresentModeKHR m[16];
     if (n > 16) n = 16;
     vkGetPhysicalDeviceSurfacePresentModesKHR(g_vk.phys, g_vk.surface, &n, m);
     for (uint32_t i = 0; i < n; i++) if (m[i] == want) return want;
+    for (uint32_t i = 0; i < n; i++) if (m[i] == VK_PRESENT_MODE_MAILBOX_KHR) return VK_PRESENT_MODE_MAILBOX_KHR;
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
@@ -1040,6 +1053,8 @@ static void create_swapchain(void) {
         .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, .presentMode = present_mode(), .clipped = VK_TRUE,
         .oldSwapchain = old};
     VK_CHECK(vkCreateSwapchainKHR(g_vk.dev, &ci, NULL, &g_vk.swapchain));
+    present_mode_made = ci.presentMode;
+    present_fifo_made = (ci.presentMode == VK_PRESENT_MODE_FIFO_KHR);
     static const char *const modes[] = {"immediate", "mailbox", "fifo", "fifo-relaxed"};
     LOG("[vk] swapchain %ux%u, %u images, %s%s\n", ext.width, ext.height, count,
         ci.presentMode < 4 ? modes[ci.presentMode] : "other present mode",
@@ -1153,7 +1168,7 @@ bool vk_frame_begin(const float clear[4]) {
     if (rec_present_recreate()) recreate_swapchain();
     if (!g_vk.swapchain || (uint32_t)w != g_vk.sc_extent.width || (uint32_t)h != g_vk.sc_extent.height) recreate_swapchain();
     else if (g_vk.hdr != (g_vk.hdr_capable && g_settings.hdr && !ENV("LARECOMP_NO_HDR"))) recreate_swapchain();  // (HDR switched)
-    else if (present_fifo_made != g_settings.present_fifo) recreate_swapchain();  // (Frame pacing switched)
+    else if (present_mode_made != present_mode()) recreate_swapchain();  // (Present mode / VSync / FrameGen switched)
     if (!g_vk.swapchain) return false;
     static int trace = -1;
     if (trace < 0) trace = ENV("LARECOMP_VK_TRACE") != NULL;
@@ -1361,9 +1376,13 @@ static void present_recover(const char *why) {
         return;
     }
     bool again = last_fix_ns && now - last_fix_ns < 60000000000ull;
-    LOG("[vk] the window showed nothing new for 3 s (%s): %s\n", why,
-        again && !g_present_fifo ? "FIFO presents from now on" : "new swapchain");
-    if (again) g_present_fifo = true;
+    if (g_settings.vsync != 1 && !g_settings.present_fifo && !g_settings.framegen) {
+        LOG("[vk] the window showed nothing new for 3 s (%s): new swapchain (keeping low latency/unlocked)\n", why);
+    } else {
+        LOG("[vk] the window showed nothing new for 3 s (%s): %s\n", why,
+            again && !g_present_fifo ? "FIFO presents from now on" : "new swapchain");
+        if (again) g_present_fifo = true;
+    }
     last_fix_ns = now;
     recreate_swapchain();
 }
@@ -1908,7 +1927,6 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
             // Frame Generation (90-120 FPS): interpolate intermediate frame with HUD Decoupling
             vk_framegen_draw(cb, g_prev_frame_b, b, (float)vx, (float)vy, (float)vw, (float)vh, pv, 0.5f);
             vk_hdr_mark_base();
-            menu_render((void *)cb, g_vk.sc_extent.width, g_vk.sc_extent.height);
             vk_frame_end(NULL);
             // Present base frame to the next swapchain image
             if (vk_frame_begin(black)) {
@@ -2026,7 +2044,13 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
                  g_settings.upscaler == UPSCALE_XESS ? 3 :
                  g_settings.upscaler == UPSCALE_FSR1 ? 2 : 1;
         perfmon_set_picture(g_vk.sc_extent.width, g_vk.sc_extent.height, b->width, b->height, sw, sh, sc);
-        perfmon_frame_ex(now_ns - prev_present_ns, rep, gpu_tot, pipe_w, xlate_w, tex_u);
+        if (g_settings.framegen && g_prev_frame_b && g_prev_frame_b->image && g_prev_frame_b != b) {
+            uint64_t half_dt = (now_ns - prev_present_ns) / 2;
+            perfmon_frame_ex(half_dt, rep * 0.5, gpu_tot * 0.5, pipe_w * 0.5, xlate_w * 0.5, tex_u * 0.5);
+            perfmon_frame_ex(half_dt, rep * 0.5, gpu_tot * 0.5, pipe_w * 0.5, xlate_w * 0.5, tex_u * 0.5);
+        } else {
+            perfmon_frame_ex(now_ns - prev_present_ns, rep, gpu_tot, pipe_w, xlate_w, tex_u);
+        }
     }
     prev_present_ns = now_ns;
     prev_exec_ns = cur_exec;

@@ -108,6 +108,9 @@ jobs:
           if (!(Test-Path "build/dist-za/PokeL-ARecomp-windows-x64.zip")) {
             throw "Expected package build/dist-za/PokeL-ARecomp-windows-x64.zip was not found!"
           }
+          if (Test-Path "build/PokeL-Extractor/PokeL-Extractor.exe") {
+            Copy-Item -Force "build/PokeL-Extractor/PokeL-Extractor.exe" "build/dist-za/PokeL-Extractor.exe"
+          }
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
@@ -116,29 +119,12 @@ jobs:
           path: build/dist-za/PokeL-ARecomp-windows-x64.zip
           if-no-files-found: error
 
-  # Linux build temporarily commented out for faster Windows iteration as requested
-  # linux:
-  #   name: Linux x86_64 AppImage
-  #   runs-on: ubuntu-latest
-  #   timeout-minutes: 120
-  #   steps:
-  #     - name: Checkout Code
-  #       uses: actions/checkout@v4
-  #     - name: Build Docker Container
-  #       run: docker build -t za-linux-build -f tools/linux/Containerfile tools/linux
-  #     - name: Compile AppImage
-  #       run: |
-  #         docker run --rm -v "$PWD:/src" -w /src za-linux-build bash -euo pipefail -c '
-  #           apt-get update
-  #           apt-get install -y --no-install-recommends dotnet-sdk-8.0 python3-venv
-  #           git config --global --add safe.directory /src
-  #           PYTHON=python3.12 tools/za/dist-linux.sh'
-  #     - name: Upload Linux Artifact
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: PokeL-ARecomp-linux-x86_64
-  #         path: build/dist/*.AppImage
-  #         if-no-files-found: error
+      - name: Upload Extractor Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokeL-Extractor-standalone-windows-x64
+          path: build/dist-za/PokeL-Extractor.exe
+          if-no-files-found: warn
 
   release:
     name: Publish GitHub Release
@@ -152,11 +138,18 @@ jobs:
           name: PokeL-ARecomp-windows-x64
           path: dist-release
 
+      - name: Download Extractor Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PokeL-Extractor-standalone-windows-x64
+          path: dist-release
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist-release/*.zip
+            dist-release/*.exe
           name: "PokeL-ARecomp ${{ github.ref_name }}"
           draft: false
           prerelease: false
@@ -166,10 +159,11 @@ jobs:
             Native PC port of **Pokémon Legends: Arceus** (1.1.1).
             
             ### Included in this release:
-            - **Windows x64**: `PokeL-ARecomp-windows-x64.zip`
+            - **Game Distribution**: `PokeL-ARecomp-windows-x64.zip`
+            - **Standalone ROM Extractor**: `PokeL-Extractor.exe` (WinForms GUI & CLI standalone tool for NSP/XCI RomFS/ExeFS extraction)
             
             ### Highlights:
-            - Dedicated Intel Arc B580 12GB VRAM pool unlocking and Battlemage Xe2 tuning.
-            - Intel Xeon high-core count multi-threading texture streaming.
-            - Intel XeSS SDK AI neural upscaling support.
-            - Brand new Pokémon Legends: Arceus Celestial Arc artwork and launcher theme.
+            - **Menu Reorganization**: Separated video settings into **Vídeo** (basic display, fullscreen, resolution, frame rate, VSync) and **Vídeo Avançado** (upscalers, XeSS, FSR2 TAA, Frame Gen, HUD decoupling, shadows, GTAO, SSGI, SSR).
+            - **VSync Options**: Added explicit toggle for VSync: Off (Low Latency / Mailbox), On (VSync / 60 Hz), Off (Unlimited / Immediate).
+            - **Frame Generation (90-120 FPS) Fix**: Resolved 30 FPS display vblank stall when enabling Frame Generation by decoupling presentation timing and forcing non-blocking presentation.
+            - **Standalone PokeL-Extractor**: Built directly via cloud CI as a self-contained single-file executable with LibHac, RomFS/ExeFS patch merging, and game identification.

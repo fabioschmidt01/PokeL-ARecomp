@@ -71,6 +71,7 @@ static bool fps60_holds(void) {
         last_setting = setting;
         g_fps60_fell_back = false, warm = slow = 0, t0 = 0;
     }
+    if (g_settings.framegen) return true;  // Frame generation active: never drop to 30 fps fallback
     if (!g_settings.fps60 || g_fps60_fell_back) return false;
     if (g_settings.fps60_lock) return true;
     uint64_t now = plat_now_ns(), pc = renderer_present_count();
@@ -107,6 +108,7 @@ bool rt_pla_is_60fps(void) {
     g_za_frame_hook = true;
     const char *e = ENV("LARECOMP_FPS");
     if (e) return atoi(e) >= 60;
+    if (g_settings.framegen) return true;  // Keep 60 fps base clock for Frame Generation
     return g_settings.fps60;
 }
 
