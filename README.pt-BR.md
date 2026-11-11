@@ -8,8 +8,8 @@
 
 [English](README.md) · **Português (Brasil)**
 
-[Relatar um problema](https://github.com/fabioschmidt01/PokeL-ARecomp-privado-teste/issues) ·
-[Downloads (Releases)](https://github.com/fabioschmidt01/PokeL-ARecomp-privado-teste/releases)
+[Relatar um problema](https://github.com/fabioschmidt01/PokeL-ARecomp/issues) ·
+[Downloads (Releases)](https://github.com/fabioschmidt01/PokeL-ARecomp/releases)
 
 </div>
 
@@ -77,7 +77,7 @@ O código de máquina ARM64 do jogo é traduzido antecipadamente (AOT) para C e 
 
 ## Como Jogar (Início Rápido)
 
-1. Baixe o pacote mais recente na aba [Releases](https://github.com/fabioschmidt01/PokeL-ARecomp-privado-teste/releases) (`PokeL-ARecomp-windows-x64.zip` para Windows, ou `.AppImage` para Linux).
+1. Baixe o pacote mais recente na aba [Releases](https://github.com/fabioschmidt01/PokeL-ARecomp/releases) (`PokeL-ARecomp-windows-x64.zip` para Windows, ou `.AppImage` para Linux).
 2. Extraia o conteúdo para uma pasta com permissão de escrita (exemplo: `C:\Jogos\PokeL-ARecomp`).
 3. Prepare seus arquivos do jogo:
    - Jogo base (`.nsp` ou `.xci`), a **atualização 1.1.1** (`.nsp`) e o arquivo `prod.keys` do seu console.
