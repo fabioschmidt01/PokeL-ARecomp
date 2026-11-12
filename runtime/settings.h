@@ -133,9 +133,14 @@ typedef struct {
     // mods/ folders (runtime/services/fs.c layers them): '|' between names. order: first wins where two replace the
     // same file (folders not listed come after, by name); off: not loaded. Edited on the start screen's Mods page.
     int draw_distance;        // DRAW_DISTANCE_*: 0 Standard (1x), 1 High (2.5x), 2 Ultra (4x)
+    int fov;                  // 3D Camera FOV in degrees: 45 to 90 (default: 60)
     char mods_order[1024];
     char mods_off[1024];
 } Settings;
+
+#define FOV_DEFAULT 60
+#define FOV_MIN 45
+#define FOV_MAX 90
 
 
 enum { DRAW_DISTANCE_STANDARD = 0, DRAW_DISTANCE_HIGH = 1, DRAW_DISTANCE_ULTRA = 2, N_DRAW_DISTANCES = 3 };

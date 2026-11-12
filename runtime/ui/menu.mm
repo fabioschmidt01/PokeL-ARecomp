@@ -750,6 +750,13 @@ static void tab_video_advanced(bool in_game) {
             pla_draw_distance_apply_live();
         }
     }
+    {
+        if (opt_int(TR("Field of view (FOV)", "Campo de visão (FOV)"), &g_settings.fov, 45, 90, 5, 60, "%d°",
+                    TR("Adjusts the 3D camera field of view. Lower values zoom in, higher values zoom out for a wider panoramic perspective of Hisui. Default is 60°.",
+                       "Ajusta o campo de visão da câmera 3D. Valores menores aproximam e valores maiores afastam a visão, proporcionando uma perspectiva panorâmica ampla de Hisui. O padrão é 60°."))) {
+            settings_save();
+        }
+    }
     {   // HD texture pack (textures/hd: runtime/nvn/vulkan/textures.c hd_switch, tools/za/hd_pack.py): switches at once
         int tx = g_settings.tex_hd ? 1 : 0;
         const char *tex[] = {TR("Original", "Originais"), "HD"};
@@ -1016,6 +1023,13 @@ static void tab_game(void) {
                           "Amplia a distância de renderização de Pokémon selvagens, NPCs e árvores em Hisui nativamente em código C sem pop-in. Aplica imediatamente."))) {
             settings_save();
             pla_draw_distance_apply_live();
+        }
+    }
+    {
+        if (opt_int(TR("Field of view (FOV)", "Campo de visão (FOV)"), &g_settings.fov, 45, 90, 5, 60, "%d°",
+                    TR("Adjusts the 3D camera field of view. Lower values zoom in, higher values zoom out for a wider panoramic perspective of Hisui. Default is 60°.",
+                       "Ajusta o campo de visão da câmera 3D. Valores menores aproximam e valores maiores afastam a visão, proporcionando uma perspectiva panorâmica ampla de Hisui. O padrão é 60°."))) {
+            settings_save();
         }
     }
     opt_section(TR("Active Mods & Translations", "Mods Ativos e Traduções"));

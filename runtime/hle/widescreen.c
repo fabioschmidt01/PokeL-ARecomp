@@ -104,15 +104,22 @@ float rt_skysea_margin(void) {
     return g_wide > 1.0f ? 15.0f * (g_wide - 1.0f) : 0.0f;
 }
 
-// Vertical field of view: unchanged for wide outputs; for tall ones (factor < 1) widened so the
-// horizontal view stays what the game shows at 16:9.
+// Vertical field of view: scaled by user FOV setting (g_settings.fov, default 60);
+// for tall outputs (factor < 1) widened so the horizontal view stays what the game shows at 16:9.
 float rt_fovy(float orig) {
     static float last = -1;
     if (orig != last && ENV("LARECOMP_LOG_CULL")) { LOG("[widescreen] fovy field %f\n", orig); last = orig; }
-    if (g_wide >= 1.0f || !(orig > 0)) return orig;
+    if (!(orig > 0)) return orig;
     bool degrees = orig > 3.2f;  // radians otherwise
     float half = (degrees ? orig * (float)M_PI / 180.0f : orig) * 0.5f;
-    float wide = 2.0f * atanf(tanf(half) / g_wide);
+    if (g_settings.fov >= FOV_MIN && g_settings.fov <= FOV_MAX && g_settings.fov != FOV_DEFAULT) {
+        float fov_scale = tanf(((float)g_settings.fov * 0.5f) * (float)M_PI / 180.0f) / tanf(30.0f * (float)M_PI / 180.0f);
+        half = atanf(tanf(half) * fov_scale);
+    }
+    if (g_wide < 1.0f) {
+        half = atanf(tanf(half) / g_wide);
+    }
+    float wide = 2.0f * half;
     return degrees ? wide * 180.0f / (float)M_PI : wide;
 }
 

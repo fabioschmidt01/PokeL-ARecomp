@@ -3257,6 +3257,10 @@ static void mv_note_draw(Prog *pr) {
     if (fabsf(a0 * b5 - a1 * b4 + a2 * b3 + a3 * b2 - a4 * b1 + a5 * b0) < 1e-9f) return;
     mv_frame[1] = mv_frame[0], memcpy(mv_vp[1], mv_vp[0], sizeof mv_vp[0]);
     mv_frame[0] = f, memcpy(mv_vp[0], m, sizeof mv_vp[0]);
+    if (g_settings.fov >= FOV_MIN && g_settings.fov <= FOV_MAX && g_settings.fov != FOV_DEFAULT) {
+        float fov_scale = tanf(30.0f * (float)M_PI / 180.0f) / tanf(((float)g_settings.fov * 0.5f) * (float)M_PI / 180.0f);
+        for (int i = 0; i < 8; i++) mv_vp[0][i] *= fov_scale;
+    }
     mv_depth = st.rt.depth;
     if (mv_depth->backend) fsr2_scene_w = ((TexBackend *)mv_depth->backend)->width, fsr2_scene_h = ((TexBackend *)mv_depth->backend)->height;
 }
@@ -3935,6 +3939,30 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
     if ((si->cbuf_dynamic & (1u << k)) && r.size) size = r.size > 0x10000 ? 0x10000 : r.size;
     if (size > r.size && r.size) size = r.size;
     if (size < 16) size = 16;
+    if (stage == 0 && idx == 2 && size >= 64 && fsr2_scene_pass() && r.addr) {
+        const float *m = (const float *)(uintptr_t)r.addr;
+        if (m[12] != 0.0f || m[13] != 0.0f || m[14] != 0.0f) {
+            if (g_settings.fov >= FOV_MIN && g_settings.fov <= FOV_MAX && g_settings.fov != FOV_DEFAULT) {
+                static struct { uint64_t addr, seq; int fov; VkSpan span; } fov_cache;
+                uint64_t seq = vk_pending_seq();
+                if (fov_cache.addr == r.addr && fov_cache.seq == seq && fov_cache.fov == g_settings.fov) {
+                    return ubo_span(fov_cache.span, size);
+                }
+                float fov_scale = tanf(30.0f * (float)M_PI / 180.0f) / tanf(((float)g_settings.fov * 0.5f) * (float)M_PI / 180.0f);
+                float stack_cbuf[1024];
+                void *buf = size <= sizeof(stack_cbuf) ? (void *)stack_cbuf : malloc(size);
+                if (buf) {
+                    memcpy(buf, (const void *)(uintptr_t)r.addr, size);
+                    float *f = (float *)buf;
+                    for (int i = 0; i < 8; i++) f[i] *= fov_scale;
+                    VkSpan s = vk_transient_copy(buf, size, 256);
+                    if (buf != stack_cbuf) free(buf);
+                    fov_cache.addr = r.addr; fov_cache.seq = seq; fov_cache.fov = g_settings.fov; fov_cache.span = s;
+                    return ubo_span(s, size);
+                }
+            }
+        }
+    }
     // snapshot: later CPU writes must not leak in. Shared by the draws of one submission binding the same range:
     // within a command list nothing writes guest memory (no inline UpdateUniformBuffer: that writes through below
     // and drops the shared copies).
@@ -8548,6 +8576,11 @@ static void gtao_before_lighting(Prog *pr) {
     pc[23] = 0;  // (one noise pattern: with no temporal accumulation, a pattern changing per frame flickered)
     pc[24] = (float)aw; pc[25] = (float)ah; pc[26] = (float)db->width; pc[27] = (float)db->height;
     pc[28] = fabsf(c[20 * 4 + 0]); pc[29] = fabsf(c[21 * 4 + 1]);  // tan(half fov) x / y
+    if (g_settings.fov >= FOV_MIN && g_settings.fov <= FOV_MAX && g_settings.fov != FOV_DEFAULT) {
+        float fov_scale = tanf(30.0f * (float)M_PI / 180.0f) / tanf(((float)g_settings.fov * 0.5f) * (float)M_PI / 180.0f);
+        pc[28] /= fov_scale;
+        pc[29] /= fov_scale;
+    }
     pc[30] = gtao_env("LARECOMP_GTAO_DEBUG", 0);
     pc[31] = (float)(gtao_level() + 1);  // (slices: 2 / 3 / 4, twice as many steps each)  // (1: the lit image replaced by the AO alone, to check it)
     if (pc[28] <= 0 || pc[29] <= 0) return;

@@ -57,6 +57,7 @@ Settings g_settings = {
     .tex_hd = true,
     .screen_filter = 4,       // Hisui Vibrant (Recommended)
     .draw_distance = DRAW_DISTANCE_HIGH, // High (2.5x - Recommended)
+    .fov = 60,                // 60° (Default)
     .shadow_res = 1,
     .shadow_sharp = 1,
     .gtao = 1,
@@ -412,6 +413,10 @@ void settings_load(void) {
         else if (!strcmp(key, "draw_distance")) {
             for (int i = 0; i < N_DRAW_DISTANCES; i++) if (!strcmp(val, k_draw_distance_keys[i])) g_settings.draw_distance = i;
         }
+        else if (!strcmp(key, "fov")) {
+            int v = atoi(val);
+            if (v >= FOV_MIN && v <= FOV_MAX) g_settings.fov = v;
+        }
         else if (!strcmp(key, "enemy_colours")) {
             for (int i = 0; i < N_ENEMY_COLOUR_MODES; i++) if (!strcmp(val, k_enemy_colour_keys[i])) g_settings.enemy_colours = i;
         }
@@ -524,6 +529,7 @@ void settings_save(void) {
     fprintf(f, "enemy_colours = %s\n", k_enemy_colour_keys[g_settings.enemy_colours]);
     fprintf(f, "screen_filter = %s\n", k_screen_filter_keys[g_settings.screen_filter]);
     fprintf(f, "draw_distance = %s\n", k_draw_distance_keys[g_settings.draw_distance]);
+    fprintf(f, "fov = %d\n", g_settings.fov >= FOV_MIN && g_settings.fov <= FOV_MAX ? g_settings.fov : FOV_DEFAULT);
     bind_settings_save(f);
     fprintf(f, "rando_seed = %s\n", g_settings.rando_seed);
     if (g_settings.rando_options[0]) fprintf(f, "rando_options = %s\n", g_settings.rando_options);
