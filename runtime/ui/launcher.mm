@@ -103,7 +103,7 @@ static const char *build_version(const uint8_t id[8]) {
 static bool build_is_za(const uint8_t id[8]) { return build_version(id) && memcmp(id, BUILD_ID, 8); }
 // The release tag this build is (also names the release files; Makefile / tools/bundle_macos.sh / make_dmg.sh read
 // it): PokeL-ARecomp's v<major>.<minor>.<patch>.
-#define LARECOMP_VERSION "v0.26.1"
+#define LARECOMP_VERSION "v0.26.2"
 extern "C" const char *rt_version(void) { return LARECOMP_VERSION; }  // (runtime/main.c: the log's first line)
 extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }  // (the shader caches' tag)
 
@@ -2775,8 +2775,9 @@ extern "C" void launcher_run(const char *root) {
                         ty += 84;
                     }
                     bool can = rebuild || !src.empty();
-                    if (button("##setup", rebuild ? TR("Compile now", "Compilar agora") : TR("Set up the game", "Preparar o jogo"),
-                               x, ty, 0, 54, BTN_PRIMARY, can, IC_PLAY, F_LABEL, 17, true)) {
+                    const char *setup_txt = rebuild ? TR("Compile now", "Compilar agora") : TR("Set up the game", "Preparar o jogo");
+                    float setup_w = text_size(F_LABEL, 17, setup_txt).x + 2 * (54 * 0.42f) + (17 * 1.15f + 17 * 1.15f * 0.55f);
+                    if (button("##setup", setup_txt, x, ty, setup_w, 54, BTN_PRIMARY, can, IC_PLAY, F_LABEL, 17, true)) {
                         pthread_mutex_lock(&g_lock);
                         g_busy = true;
                         pthread_mutex_unlock(&g_lock);
@@ -2784,8 +2785,20 @@ extern "C" void launcher_run(const char *root) {
                         pthread_create(&t, NULL, extract_thread, NULL);
                         pthread_detach(t);
                     }
+                    float cur_x = x + setup_w + 16;
+                    if (!rebuild) {
+                        const char *ext_txt = TR("Extract ROM (PokeL-Extractor)", "Extrair ROM (PokeL-Extractor)");
+                        float ext_w = text_size(F_LABEL, 16, ext_txt).x + 2 * (54 * 0.42f) + (16 * 1.15f + 16 * 1.15f * 0.55f);
+                        if (button("##extractor", ext_txt, cur_x, ty, ext_w, 54, BTN_SECONDARY, true, IC_FOLDER, F_LABEL, 16)) {
+                            std::string ext = std::string(rt_data_root()) + "/PokeL-Extractor.exe";
+                            if (!file_exists(ext)) ext = "PokeL-Extractor.exe";
+                            const char *av[] = {ext.c_str(), NULL};
+                            plat_spawn(av, NULL, false);
+                        }
+                        cur_x += ext_w + 16;
+                    }
                     if (g_changing_folder && ready) {
-                        if (button("##cancel_folder", TR("Cancel", "Cancelar"), x + 260, ty + 7, 0, 40, BTN_GHOST) || back_key)
+                        if (button("##cancel_folder", TR("Cancel", "Cancelar"), cur_x, ty + 7, 0, 40, BTN_GHOST) || back_key)
                             g_changing_folder = false, g_focus_play = true;
                     }
                     ty += 74;
@@ -3332,6 +3345,9 @@ extern "C" void launcher_run(const char *root) {
     // play: hand the window to the game
     settings_save();
     xbox_layout_before_play();
+    if (g_settings.fullscreen) {
+        SDL_SetWindowFullscreen((SDL_Window *)win, true);
+    }
 #ifdef __APPLE__
     ImGui_ImplMetal_Shutdown();
 #else

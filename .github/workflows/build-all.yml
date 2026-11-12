@@ -172,6 +172,13 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
+      # (only the release notes: .github/RELEASE_NOTES.md holds what changed in this version, rewritten every release)
+      - name: Checkout Release Notes
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/RELEASE_NOTES.md
+          sparse-checkout-cone-mode: false
+
       - name: Download Windows Artifact
         uses: actions/download-artifact@v4
         with:
@@ -190,6 +197,28 @@ jobs:
           name: PokeL-ARecomp-linux-x86_64
           path: dist-release
 
+      - name: Build Release Notes
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          {
+            echo "## PokeL-ARecomp (PLA Recomp) ${TAG}"
+            echo
+            echo "Native PC port of **Pokémon Legends: Arceus** (1.1.1)."
+            echo
+            echo "### Downloads"
+            echo "- **Windows**: \`PokeL-ARecomp-windows-x64.zip\`"
+            echo "- **Linux**: \`PokeL-ARecomp-${TAG}-linux-x86_64.AppImage\` (glibc 2.35+, Steam Deck / Ubuntu / Mint / Fedora / Arch)"
+            echo "- **PokeL-Extractor**: \`PokeL-Extractor.exe\` (separate NSP/XCI extraction tool, versioned independently)"
+            echo
+            if [ -s .github/RELEASE_NOTES.md ]; then
+              cat .github/RELEASE_NOTES.md
+            else
+              echo "See the [README](https://github.com/${GITHUB_REPOSITORY}#features) for the current feature list."
+            fi
+          } > release_notes.md
+          cat release_notes.md
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -200,18 +229,4 @@ jobs:
           name: "PokeL-ARecomp ${{ github.ref_name }}"
           draft: false
           prerelease: false
-          body: |
-            ## PokeL-ARecomp (PLA Recomp) ${{ github.ref_name }}
-            
-            Native PC port of **Pokémon Legends: Arceus** (1.1.1).
-            
-            ### Included in this release:
-            - **Windows Package**: `PokeL-ARecomp-windows-x64.zip`
-            - **Linux AppImage**: `PokeL-ARecomp-linux-x86_64.AppImage` (glibc 2.35+, Steam Deck / Ubuntu / Mint / Fedora / Arch)
-            - **Standalone ROM Extractor**: `PokeL-Extractor.exe` (WinForms GUI & CLI standalone tool for NSP/XCI RomFS/ExeFS extraction)
-            
-            ### Highlights:
-            - **Menu Reorganization**: Separated video settings into **Vídeo** (basic display, fullscreen, resolution, frame rate, VSync) and **Vídeo Avançado** (upscalers, XeSS, FSR2 TAA, Frame Gen, HUD decoupling, shadows, GTAO, SSGI, SSR).
-            - **VSync Options**: Added explicit toggle for VSync: Off (Low Latency / Mailbox), On (VSync / 60 Hz), Off (Unlimited / Immediate).
-            - **Frame Generation (90-120 FPS) Fix**: Resolved 30 FPS display vblank stall when enabling Frame Generation by decoupling presentation timing and forcing non-blocking presentation.
-            - **Standalone PokeL-Extractor**: Built directly via cloud CI as a self-contained single-file executable with LibHac, RomFS/ExeFS patch merging, and game identification.
+          body_path: release_notes.md

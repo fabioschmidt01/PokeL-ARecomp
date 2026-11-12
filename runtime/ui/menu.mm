@@ -287,10 +287,17 @@ void menu_apply_window_requests(void *win) {
         else SDL_StopTextInput(w);
         text_input = want_text;
     }
-    static bool first = true;
-    if (first || g_want_fullscreen_apply.exchange(false)) {
-        first = false;
-        SDL_SetWindowFullscreen(w, g_settings.fullscreen);
+    extern "C" int g_start_screen;
+    static bool first_game = true;
+    if (g_start_screen) {
+        if (g_want_fullscreen_apply.exchange(false)) {
+            SDL_SetWindowFullscreen(w, g_settings.fullscreen);
+        }
+    } else {
+        if (first_game || g_want_fullscreen_apply.exchange(false)) {
+            first_game = false;
+            SDL_SetWindowFullscreen(w, g_settings.fullscreen);
+        }
     }
     if (uint32_t r = __atomic_exchange_n(&g_window_resize_request, 0u, __ATOMIC_RELAXED))
         SDL_SetWindowSize(w, (int)(r >> 16), (int)(r & 0xffff));

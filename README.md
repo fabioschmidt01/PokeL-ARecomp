@@ -9,7 +9,8 @@
 **English** · [Português (Brasil)](README.pt-BR.md)
 
 [Report an issue](https://github.com/fabioschmidt01/PokeL-ARecomp/issues) ·
-[Releases](https://github.com/fabioschmidt01/PokeL-ARecomp/releases)
+[![Latest release](https://img.shields.io/github/v/release/fabioschmidt01/PokeL-ARecomp?label=latest)](https://github.com/fabioschmidt01/PokeL-ARecomp/releases/latest) ·
+[Download](https://github.com/fabioschmidt01/PokeL-ARecomp/releases/latest)
 
 </div>
 
@@ -32,12 +33,15 @@ The game's ARM64 machine code is translated ahead-of-time (AOT) into C and compi
 - **Frame Generation (90–120 FPS)**: Optional hardware-accelerated optical flow frame interpolation smooths motion up to 90–120 FPS without speeding up game logic.
 - **HUD Decoupling**: Isolates 2D UI elements (minimap, health gauges, reticles, text) via `hdr_snapshot` to eliminate ghosting artifacts during Frame Generation.
 - **Explicit VSync Modes**: Choose between *Off (Low Latency / Mailbox)*, *On (VSync / 60 Hz - FIFO)*, or *Off (Unlimited / Immediate)* with instant swapchain recreation.
+- **True Uncapped FPS**: Smooth framerates beyond 60 FPS (up to 240 FPS) with dynamic delta-time floor scaling down to 4.16 ms when VSync is set to *Off (Unlimited)*, with zero physics speed-up.
 - **Internal Resolution Scaling**: From 25% up to 4x native 1080p (4K UHD) with Dynamic Resolution scaling.
 - **High Core-Count Scaling (Intel Xeon & Multi-Core CPUs)**: Dynamic worker thread scaling (up to 8 parallel texture deswizzling threads on 16-24+ thread CPUs) eliminating texture streaming stutter.
 - **Dedicated GPU Memory Unlocking (Intel Arc & High-VRAM GPUs)**: Full 3.1 GB physical pool unlocked for GPUs with dedicated VRAM (such as the 12 GB Intel Arc B580 Battlemage), preventing memory thrashing.
 
 ### Graphics & Upscaling
 - **Separated Options Menu**: Dedicated **Video** (display, resolution, fps, vsync) and **Advanced Video** (XeSS, FSR, Frame Gen, shadows, AO, SSR, GI) tabs for clean customization.
+- **Native In-Engine Draw Distance**: Adjustable entity and vegetation rendering radius in C code without external mods (*Standard 1x*, *High 2.5x*, *Ultra 4x*). Wild Pokémon and NPC spawn distance up to 150m, trees visible up to 800m.
+- **Hisui Color Enhancement & Tonemapper**: High-fidelity Vulkan presentation post-processing filters (*Hisui Vibrant* and *Hisui Cinematic*) removing the washed-out gray haze with zero CPU overhead.
 - **Intel XeSS (Xe Super Sampling)**: AI neural upscaling accelerated by hardware XMX engines on Intel Arc GPUs (Ultra Performance to Native AA).
 - **AMD FidelityFX FSR 1, FSR 2 (temporal)**, and **SMAA** anti-aliasing.
 - **Contrast-Adaptive Sharpening (RCAS)**: Real-time image clarity adjustment.
@@ -45,8 +49,11 @@ The game's ARM64 machine code is translated ahead-of-time (AOT) into C and compi
 - **HDR Display Output**: scRGB / HDR10 support with peak brightness tuning.
 - **HD Texture Pack Loader**: Direct loading from `textures/hd/`.
 
+### Saves & Safety
+- **Automatic Save Backup Rotation**: Creates timestamped backups in `save/backups/main_YYYYMMDD_HHMMSS.bak` whenever the game commits save data, retaining the 10 most recent copies.
+
 ### Tools & Utilities
-- **PokeL-Extractor (Standalone ROM Tool)**: Bundled single-file GUI & CLI utility based on LibHac. Inspects NSP/XCI dumps, auto-detects base games, updates (v262144), and DLCs, displays Nintendo Switch game icons, and merges BKTR RomFS patches with real-time speed and ETA.
+- **PokeL-Extractor (Standalone ROM Tool)**: Bundled single-file GUI & CLI utility based on LibHac (versioned independently). Extracts Nintendo Switch dumps (`.nsp` / `.xci`) directly into the native directory tree (`exefs/` and recursive `romfs/`) with automatic BKTR patch and DLC layering, ready for instant play.
 
 ### Controls & Input
 - Any modern gamepad via SDL3: Xbox, DualShock 4, DualSense, Nintendo Switch Pro Controller, Steam Deck.
@@ -77,7 +84,7 @@ The game's ARM64 machine code is translated ahead-of-time (AOT) into C and compi
 
 ## Quick Start (Playing)
 
-1. Download the latest release from the [Releases](https://github.com/fabioschmidt01/PokeL-ARecomp/releases) tab (`PokeL-ARecomp-windows-x64.zip` for Windows, or `.AppImage` for Linux).
+1. Download the latest release from the [Releases](https://github.com/fabioschmidt01/PokeL-ARecomp/releases/latest) page (`PokeL-ARecomp-windows-x64.zip` for Windows, or `.AppImage` for Linux).
 2. Extract the archive into a writable folder (e.g. `C:\Games\PokeL-ARecomp`).
 3. Prepare your game files:
    - Base game (`.nsp` or `.xci`), the **1.1.1 update** (`.nsp`), and your `prod.keys` dumped from your console.
@@ -113,63 +120,6 @@ Bundled with every release is **PokeL-Extractor** (`PokeL-Extractor.exe`), a sta
 | F1 / Esc | Settings Menu | + / − |
 | F10 | Save Screenshot (`screenshots/`) | - |
 | F11 | Fullscreen toggle | - |
-
----
-
-## Version History & Changelog
-
-### v0.0.26 (Latest)
-- **PokeL-Extractor RomFS Directory Tree Extraction**: Upgraded standalone extractor to extract RomFS as a complete, native directory tree (`romfs/`) with automatic recursive subfolder traversal, eliminating `romfs.bin` and matching the recomp standard (SavageWindRecomp / Zelda). LayeredFS merges DLC and update patches seamlessly.
-- **Stability Fix for Unmapped Index Buffers (Crash 0x80)**: Added safety bounds checking on guest index buffer addresses (`iaddr < 0x1000` / null count) in indexed draw calls, preventing access violation `c0000005 accessing 0x80` during extended gameplay sessions.
-- **F1 Menu Stability & Transparency Bug Fix**: Completely resolved the issue where opening F1 menus with Frame Generation made options semi-transparent, ghosted, or flickering. Frame Generation now automatically disengages while inside the pause/settings menu, providing rock-solid, fully opaque UI.
-- **HUD & Overlay Frame Generation Persistence**: Implemented `menu_render_repeat` so in-game HUD elements (FPS counter, performance monitor, timers) are drawn onto both generated and base frames, eliminating HUD flicker during gameplay.
-- **Temporal Presentation Pacing for Frame Generation**: Added half-frame pacing (`dt_half`) between intermediate and base frame presentations, ensuring monitors actually scan out both frames (reaching true 90–120 FPS output) rather than discarding them in swapchain mailboxes.
-- **True Uncapped FPS Support**: Unlocked presentation pacing in `present_pace` and scaled dynamic delta-time floor down to 4.16 ms (240 FPS) when VSync is set to *Off (Uncapped)*, enabling framerates to soar beyond 60 FPS without game speed acceleration.
-- **UI Text Overlap Protection**: Fixed text collision in `option_rows` by enforcing strict clipping boundaries between option labels, navigation chevrons, and value texts, while shortening VSync options for crystal-clear readability.
-
-### v0.26.1 (Latest)
-- **Native C Draw Distance Scaling**: In-engine draw distance control in C without modifying files on disk or relying on external mods:
-  - *Standard (1x)*: Original Nintendo Switch settings.
-  - *High (2.5x - Recommended)*: Wild Pokémon and NPC spawn radius increased from 40m/60m to 100m; tree rendering distance increased from 200m to 500m.
-  - *Ultra (4x - Maximum)*: Wild Pokémon and NPC radius increased to 150m; tree rendering distance increased to 800m.
-  - Dynamically patches `field_common_config.bin` in memory during RomFS load with zero filesystem footprint.
-- **Hisui Color Tonemapper (Vulkan Post-Processing)**:
-  - *Hisui Vibrant (Recommended)*: Removes the washed-out gray haze of the original game, adding natural color saturation (+20%) and contrast curve on the GPU presentation pass with zero CPU overhead.
-  - *Hisui Cinematic*: Richer contrast and deeper atmospheric tones for dramatic skies and wild landscapes.
-  - Accessible in **Advanced Video** > **Color Enhancement** and **Cosmetics** > **Color Filter**.
-- **Automatic Save Rotation & Backup System**:
-  - Automatically creates timestamped backups (`save/backups/main_YYYYMMDD_HHMMSS.bak`) whenever the game commits save data.
-  - Automatic rotation keeps the 10 most recent backups to safeguard against power loss or corruption.
-- **PokeL-Extractor Recursive RomFS Tree**: Extractor now unpacks the complete decrypted RomFS directory tree (`romfs/...`) directly, eliminating raw `.bin` archives and preparing the directory structure ready for gameplay.
-
-### v0.0.25
-- **Menu Reorganization**: Separated into dedicated **Video** (Display, Resolution, Framerate, VSync) and **Advanced Video** (XeSS, FSR, Frame Gen, Shadows, Ambient Occlusion, SSR, SSGI) tabs.
-- **Explicit VSync Selector**: Direct control over swapchain presentation modes:
-  - *Off (Low Latency / Mailbox)*: Zero vblank tearing, non-blocking acquisition for high refresh rate and Frame Gen.
-  - *On (VSync / 60 Hz - FIFO)*: Standard sync to display vertical refresh rate.
-  - *Off (Unlimited / Immediate)*: Direct unbuffered presentation for raw latency testing.
-- **Frame Generation 30 FPS Cap Resolution**: Fixed double-vblank blocking under FIFO when Frame Gen is engaged, preventing the game loop from dropping to 30 FPS.
-- **PokeL-Extractor Integration**: Standalone ROM extractor bundled directly into release packages and CI artifacts.
-
-### v0.0.24
-- **Release Branding Cleanup**: Renamed application distribution to **PokeL-ARecomp** (`PokeL-ARecomp.exe`).
-- **Official Arceus PE Icon**: Embedded high-resolution (16x16 up to 256x256) Arceus Celestial Wheel icon into Windows PE executable.
-- **Log Streamlining**: Cleared legacy game log messages and aligned engine identifiers.
-- **Intel Arc B580 Xe2 Tuning**: Dedicated 3.1 GB physical VRAM pool unlocked, preventing iGPU 1 GB fallback.
-- **Intel Xeon Multi-Threading**: Dynamic worker thread scaling up to 8 parallel texture deswizzling threads.
-
-### v0.0.23
-- **Crash Fix (`0xc0000005`)**: Moved `dcache` and `jmps` state into per-thread CPU structures, eliminating memory access violations on launch.
-- **Improved Game Loop Reliability**: Normalized initialization lifecycle for sound, filesystem, and NVN graphics.
-
-### v0.0.22
-- **Dynamic 60 FPS Engine**: Implemented dynamic delta-time pacing for *Pokémon Legends: Arceus*, allowing smooth 60 FPS gameplay without double-speed physics.
-
-### v0.0.21
-- **Vulkan HUD Decoupling**: Added `hdr_snapshot` isolation to prevent optical flow ghosting on HUD, minimap, and battle reticles during Frame Generation.
-
-### v0.0.20
-- **Intel XeSS SDK Integration**: Added AI neural upscaling support via Intel XeSS XMX engines and DP4a fallback.
 
 ---
 
