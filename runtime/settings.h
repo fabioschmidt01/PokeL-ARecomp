@@ -140,6 +140,7 @@ typedef struct {
 
 enum { DRAW_DISTANCE_STANDARD = 0, DRAW_DISTANCE_HIGH = 1, DRAW_DISTANCE_ULTRA = 2, N_DRAW_DISTANCES = 3 };
 extern const char *const g_draw_distances[N_DRAW_DISTANCES];
+void pla_draw_distance_apply_live(void);
 enum { N_ENEMY_COLOUR_MODES = 3, N_SCREEN_FILTERS = 6 };
 extern const char *const g_screen_filters[N_SCREEN_FILTERS];  // (the menu's names)
 extern const char *const g_enemy_colour_modes[N_ENEMY_COLOUR_MODES];  // (the menu's names)

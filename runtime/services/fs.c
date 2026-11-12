@@ -789,21 +789,26 @@ static void pla_patch_field_cfg_range(uint8_t *dst, uint64_t size, uint64_t off,
     if (!f_start || !f_size) return;
     if (off + size <= f_start || off >= f_start + f_size) return;
 
-    const char *poke_rad = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "150" : "100";
-    const char *npc_rad  = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "150" : "100";
-    const char *tree_vis = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "800" : "500";
-    uint32_t len3 = 3;
+    const char *poke_rad = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "150" :
+                           (g_settings.draw_distance == DRAW_DISTANCE_HIGH)  ? "100" : "40";
+    const char *npc_rad  = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "150" :
+                           (g_settings.draw_distance == DRAW_DISTANCE_HIGH)  ? "100" : "60";
+    const char *tree_vis = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "800" :
+                           (g_settings.draw_distance == DRAW_DISTANCE_HIGH)  ? "500" : "200";
+    uint32_t len_poke = (g_settings.draw_distance == DRAW_DISTANCE_STANDARD) ? 2 : 3;
+    uint32_t len_npc  = (g_settings.draw_distance == DRAW_DISTANCE_STANDARD) ? 2 : 3;
+    uint32_t len_tree = 3;
 
     struct PatchEntry {
         uint64_t file_offset;
         const void *data;
         size_t len;
     } p[] = {
-        { 152, &len3, 4 },
-        { 156, poke_rad, 4 },
-        { 280, &len3, 4 },
-        { 284, npc_rad, 4 },
-        { 1624, &len3, 4 },
+        { 152, &len_poke, 4 },
+        { 156, poke_rad, (len_poke == 2) ? 2 : 4 },
+        { 280, &len_npc, 4 },
+        { 284, npc_rad, (len_npc == 2) ? 2 : 4 },
+        { 1624, &len_tree, 4 },
         { 1628, tree_vis, 4 }
     };
 
@@ -824,7 +829,8 @@ static void pla_patch_field_cfg_range(uint8_t *dst, uint64_t size, uint64_t off,
 }
 
 static void pla_draw_distance_filter(uint8_t *dst, uint64_t size, uint64_t off) {
-    if (g_settings.draw_distance <= DRAW_DISTANCE_STANDARD || !dst || size < 4) return;
+    if (!dst || size < 4) return;
+    if (g_settings.draw_distance < 0 || g_settings.draw_distance >= N_DRAW_DISTANCES) return;
 
     if (g_field_cfg_off) pla_patch_field_cfg_range(dst, size, off, g_field_cfg_off, g_field_cfg_size);
     if (g_field_cfg_ov_off) pla_patch_field_cfg_range(dst, size, off, g_field_cfg_ov_off, g_field_cfg_ov_size);
@@ -833,26 +839,34 @@ static void pla_draw_distance_filter(uint8_t *dst, uint64_t size, uint64_t off) 
         const char *sig1 = "kArea00NpcPokeLoadRadius";
         uint8_t *p1 = (uint8_t *)mem_find(dst, (size_t)size, sig1, strlen(sig1));
         if (p1 && (size_t)(p1 - dst) >= 28) {
-            const char *poke_rad = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "150" : "100";
-            const char *npc_rad  = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "150" : "100";
-            const char *tree_vis = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "800" : "500";
-            uint32_t len3 = 3;
+            const char *poke_rad = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "150" :
+                                   (g_settings.draw_distance == DRAW_DISTANCE_HIGH)  ? "100" : "40";
+            const char *npc_rad  = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "150" :
+                                   (g_settings.draw_distance == DRAW_DISTANCE_HIGH)  ? "100" : "60";
+            const char *tree_vis = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "800" :
+                                   (g_settings.draw_distance == DRAW_DISTANCE_HIGH)  ? "500" : "200";
+            uint32_t len_poke = (g_settings.draw_distance == DRAW_DISTANCE_STANDARD) ? 2 : 3;
+            uint32_t len_npc  = (g_settings.draw_distance == DRAW_DISTANCE_STANDARD) ? 2 : 3;
+            uint32_t len_tree = 3;
 
-            memcpy(p1 - 28, &len3, 4);
-            memcpy(p1 - 24, poke_rad, 4);
+            memcpy(p1 - 28, &len_poke, 4);
+            memset(p1 - 24, 0, 4);
+            memcpy(p1 - 24, poke_rad, strlen(poke_rad));
 
             const char *sig2 = "kArea00NpcLoadRadius";
             uint8_t *p2 = (uint8_t *)mem_find(dst, (size_t)size, sig2, strlen(sig2));
             if (p2 && (size_t)(p2 - dst) >= 28) {
-                memcpy(p2 - 28, &len3, 4);
-                memcpy(p2 - 24, npc_rad, 4);
+                memcpy(p2 - 28, &len_npc, 4);
+                memset(p2 - 24, 0, 4);
+                memcpy(p2 - 24, npc_rad, strlen(npc_rad));
             }
 
             const char *sig3 = "kTreeVisibleDistance";
             uint8_t *p3 = (uint8_t *)mem_find(dst, (size_t)size, sig3, strlen(sig3));
             if (p3 && (size_t)(p3 - dst) >= 36) {
-                memcpy(p3 - 36, &len3, 4);
-                memcpy(p3 - 32, tree_vis, 4);
+                memcpy(p3 - 36, &len_tree, 4);
+                memset(p3 - 32, 0, 4);
+                memcpy(p3 - 32, tree_vis, strlen(tree_vis));
             }
 
             if (!g_field_cfg_patched_log) {
@@ -862,6 +876,83 @@ static void pla_draw_distance_filter(uint8_t *dst, uint64_t size, uint64_t off) 
             }
         }
     }
+}
+
+void pla_draw_distance_apply_live(void) {
+    if (g_settings.draw_distance < 0 || g_settings.draw_distance >= N_DRAW_DISTANCES) return;
+
+    const char *poke_rad = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "150" :
+                           (g_settings.draw_distance == DRAW_DISTANCE_HIGH)  ? "100" : "40";
+    const char *npc_rad  = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "150" :
+                           (g_settings.draw_distance == DRAW_DISTANCE_HIGH)  ? "100" : "60";
+    const char *tree_vis = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "800" :
+                           (g_settings.draw_distance == DRAW_DISTANCE_HIGH)  ? "500" : "200";
+
+    uint32_t len_poke = (g_settings.draw_distance == DRAW_DISTANCE_STANDARD) ? 2 : 3;
+    uint32_t len_npc  = (g_settings.draw_distance == DRAW_DISTANCE_STANDARD) ? 2 : 3;
+    uint32_t len_tree = 3;
+
+    extern int kernel_data_regions(uint64_t *addr, uint64_t *size, int max);
+    uint64_t ra[64], rs[64];
+    int nr = kernel_data_regions(ra, rs, 64);
+    int patched = 0;
+
+    const char *sig1 = "kArea00NpcPokeLoadRadius";
+    size_t sig1_len = strlen(sig1);
+
+    for (int i = 0; i < nr; i++) {
+        uint8_t *base = (uint8_t *)(uintptr_t)ra[i];
+        uint64_t sz = rs[i];
+        if (sz < 200) continue;
+
+        for (uint64_t k = 0; k + sig1_len <= sz; ) {
+            uint8_t *hit = (uint8_t *)mem_find(base + k, (size_t)(sz - k), sig1, sig1_len);
+            if (!hit) break;
+
+            if ((size_t)(hit - base) >= 28) {
+                uint8_t *p_poke = hit - 24;
+                uint8_t *l_poke = hit - 28;
+                memcpy(l_poke, &len_poke, 4);
+                memset(p_poke, 0, 4);
+                memcpy(p_poke, poke_rad, strlen(poke_rad));
+                patched++;
+            }
+
+            const char *sig2 = "kArea00NpcLoadRadius";
+            size_t sig2_len = strlen(sig2);
+            uint64_t s2_start = (hit - base > 200) ? (hit - base - 200) : 0;
+            uint64_t s2_end = (hit - base + 600 < sz) ? (hit - base + 600) : sz;
+            uint8_t *hit2 = (uint8_t *)mem_find(base + s2_start, (size_t)(s2_end - s2_start), sig2, sig2_len);
+            if (hit2 && (size_t)(hit2 - base) >= 28) {
+                uint8_t *p_npc = hit2 - 24;
+                uint8_t *l_npc = hit2 - 28;
+                memcpy(l_npc, &len_npc, 4);
+                memset(p_npc, 0, 4);
+                memcpy(p_npc, npc_rad, strlen(npc_rad));
+                patched++;
+            }
+
+            const char *sig3 = "kTreeVisibleDistance";
+            size_t sig3_len = strlen(sig3);
+            uint64_t s3_start = (hit - base > 200) ? (hit - base - 200) : 0;
+            uint64_t s3_end = (hit - base + 2048 < sz) ? (hit - base + 2048) : sz;
+            uint8_t *hit3 = (uint8_t *)mem_find(base + s3_start, (size_t)(s3_end - s3_start), sig3, sig3_len);
+            if (hit3 && (size_t)(hit3 - base) >= 36) {
+                uint8_t *p_tree = hit3 - 32;
+                uint8_t *l_tree = hit3 - 36;
+                memcpy(l_tree, &len_tree, 4);
+                memset(p_tree, 0, 4);
+                memcpy(p_tree, tree_vis, strlen(tree_vis));
+                patched++;
+            }
+
+            k = (hit - base) + sig1_len;
+        }
+    }
+
+    g_field_cfg_patched_log = false;
+    LOG("[draw-distance] live update: preset %s (NPC/Poke: %s, Tree: %s, memory instances updated: %d)\n",
+        g_draw_distances[g_settings.draw_distance], poke_rad, tree_vis, patched);
 }
 
 // Virtual RomFS image read: original bytes, with the patched file table and appended replacement files.

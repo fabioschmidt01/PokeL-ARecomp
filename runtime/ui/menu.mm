@@ -34,6 +34,7 @@ extern "C" {
 #include "../settings.h"
 #include "../perfmon.h"
 extern int g_game_is_la;  // runtime/kernel.c: Link's Awakening (its own tabs: randomizer, warp, cheats...)
+extern int g_start_screen;
 #include "menu.h"
 void input_reset(void);
 void save_editor_draw(float scale);  // save_editor.mm
@@ -287,7 +288,6 @@ void menu_apply_window_requests(void *win) {
         else SDL_StopTextInput(w);
         text_input = want_text;
     }
-    extern "C" int g_start_screen;
     static bool first_game = true;
     if (g_start_screen) {
         if (g_want_fullscreen_apply.exchange(false)) {
@@ -731,9 +731,24 @@ static void tab_video_advanced(bool in_game) {
             TR("Hisui Vibrant (Recommended)", "Hisui Vívido (Recomendado)"),
             TR("Hisui Cinematic", "Hisui Cinematográfico")
         };
-        opt_choice(TR("Color enhancement", "Realce de cores"), &g_settings.screen_filter, sf_names, N_SCREEN_FILTERS, 0,
-                   TR("Tonemapper and vibrance filter in Vulkan to eliminate the washed-out gray haze of Hisui.",
-                      "Filtro de tonemapper e vibração no Vulkan para eliminar a névoa cinza e desbotada de Hisui."));
+        if (opt_choice(TR("Color enhancement", "Realce de cores"), &g_settings.screen_filter, sf_names, N_SCREEN_FILTERS, 4,
+                       TR("Tonemapper and vibrance filter in Vulkan to eliminate the washed-out gray haze of Hisui.",
+                          "Filtro de tonemapper e vibração no Vulkan para eliminar a névoa cinza e desbotada de Hisui."))) {
+            settings_save();
+        }
+    }
+    {
+        const char *dd_names[] = {
+            TR("Standard (1x - Switch)", "Padrão (1x - Switch)"),
+            TR("High (2.5x - Recommended)", "Alta (2.5x - Recomendada)"),
+            TR("Ultra (4x - Maximum)", "Ultra (4x - Máxima)")
+        };
+        if (opt_choice(TR("Draw distance", "Distância de visão"), &g_settings.draw_distance, dd_names, N_DRAW_DISTANCES, DRAW_DISTANCE_HIGH,
+                       TR("Expands render distance for wild Pokémon, NPCs, and trees across Hisui in native C code without pop-in. Takes effect immediately.",
+                          "Amplia a distância de renderização de Pokémon selvagens, NPCs e árvores em Hisui nativamente em código C sem pop-in. Aplica imediatamente."))) {
+            settings_save();
+            pla_draw_distance_apply_live();
+        }
     }
     {   // HD texture pack (textures/hd: runtime/nvn/vulkan/textures.c hd_switch, tools/za/hd_pack.py): switches at once
         int tx = g_settings.tex_hd ? 1 : 0;
@@ -996,9 +1011,12 @@ static void tab_game(void) {
             TR("High (2.5x - Recommended)", "Alta (2.5x - Recomendada)"),
             TR("Ultra (4x - Maximum)", "Ultra (4x - Máxima)")
         };
-        opt_choice(TR("Draw distance", "Distância de visão"), &g_settings.draw_distance, dd_names, N_DRAW_DISTANCES, DRAW_DISTANCE_HIGH,
-                   TR("Expands render distance for wild Pokémon, NPCs, and trees across Hisui in native C code without pop-in. Takes effect on next area load.",
-                      "Amplia a distância de renderização de Pokémon selvagens, NPCs e árvores em Hisui nativamente em código C sem pop-in. Aplica ao carregar a próxima área."));
+        if (opt_choice(TR("Draw distance", "Distância de visão"), &g_settings.draw_distance, dd_names, N_DRAW_DISTANCES, DRAW_DISTANCE_HIGH,
+                       TR("Expands render distance for wild Pokémon, NPCs, and trees across Hisui in native C code without pop-in. Takes effect immediately.",
+                          "Amplia a distância de renderização de Pokémon selvagens, NPCs e árvores em Hisui nativamente em código C sem pop-in. Aplica imediatamente."))) {
+            settings_save();
+            pla_draw_distance_apply_live();
+        }
     }
     opt_section(TR("This menu", "Este menu"));
     opt_button(TR("Shortcuts", "Atalhos"),
