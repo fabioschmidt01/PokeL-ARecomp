@@ -16,6 +16,21 @@
 
 ---
 
+> [!WARNING]
+> ### ⚠️ Projeto em Desenvolvimento Ativo / Project in Active Development
+>
+> 🇧🇷 **Aviso da Comunidade:**  
+> Este é um projeto de código aberto em estágio ativo de desenvolvimento. Durante os testes internos (feitos por mim e amigos da comunidade), observamos que **bugs visuais, quedas temporárias de performance em transições (telas de carregamento, início de batalhas e fades) e eventuais travamentos/crashes são esperados**.
+> 
+> Pedimos a sua paciência e compreensão! Se você encontrar qualquer problema ou crash, **nos ajude reportando na aba [Issues](https://github.com/fabioschmidt01/PokeL-ARecomp/issues)** anexando os arquivos `lasrecomp.log` e `larecomp.ini` que ficam na pasta raiz do seu jogo. Com o seu feedback, conseguiremos lapidar e melhorar o port cada vez mais rápido!
+>
+> ---
+>
+> 🇺🇸 **Community Notice:**  
+> This is an open-source project under active development. Throughout testing (conducted by myself, friends, and community testers), we have observed that **visual glitches, temporary performance drops during transitions (loading screens, battle entries, fades), and occasional crashes are expected**.
+>
+> We kindly ask for your patience and understanding! If you encounter any bugs or crashes, **please help us by opening a report in the [Issues](https://github.com/fabioschmidt01/PokeL-ARecomp/issues) tab**, attaching your `lasrecomp.log` and `larecomp.ini` from your game's root folder. Your feedback is essential to helping us improve the port as quickly as possible!
+
 **PokeL-ARecomp** (PLA Recomp) turns *Pokémon Legends: Arceus* Nintendo Switch code into a native 64-bit Windows and Linux program.
 The game's ARM64 machine code is translated ahead-of-time (AOT) into C and compiled natively for x86-64. The Nintendo Switch OS kernel, filesystem, audio and Maxwell NVN graphics are reimplemented directly on top of Vulkan.
 
