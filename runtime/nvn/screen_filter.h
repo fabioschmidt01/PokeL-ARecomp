@@ -8,7 +8,7 @@
 #pragma once
 #include "../settings.h"
 
-enum { SCREEN_FILTER_OFF, SCREEN_FILTER_GB, SCREEN_FILTER_GBC, SCREEN_FILTER_GRAY };
+enum { SCREEN_FILTER_OFF, SCREEN_FILTER_GB, SCREEN_FILTER_GBC, SCREEN_FILTER_GRAY, SCREEN_FILTER_HISUI_VIBRANT, SCREEN_FILTER_HISUI_CINEMATIC };
 
 // pf for the present shader (x: the mode)
 static inline void screen_filter_params(float pf[4]) {
@@ -26,8 +26,17 @@ static inline void screen_filter_params(float pf[4]) {
     "    } else if (pf.x < 2.5) {\n"                                                                                   \
     "      c = clamp(mix(" V3 "(l), c, 1.4) * 1.06, 0.0, 1.0);\n"                                                      \
     "      c = floor(c * 5.0 + 0.5) / 5.0;\n"                                                                          \
-    "    } else {\n"                                                                                                   \
+    "    } else if (pf.x < 3.5) {\n"                                                                                   \
     "      l = clamp((l - 0.5) * 1.2 + 0.5, 0.0, 1.0);\n"                                                              \
     "      c = " V3 "(l * l * (3.0 - 2.0 * l) * 0.35 + l * 0.65);\n"                                                   \
+    "    } else if (pf.x < 4.5) {\n"                                                                                   \
+    "      /* Hisui Vibrant: +20% saturation, natural contrast curve */\n"                                              \
+    "      c = clamp(c + (c - " V3 "(l)) * 0.20, 0.0, 1.0);\n"                                                         \
+    "      c = clamp(c * c * (3.0 - 2.0 * c) * 0.25 + c * 0.75, 0.0, 1.0);\n"                                         \
+    "    } else {\n"                                                                                                   \
+    "      /* Hisui Cinematic: rich atmosphere and deeper contrast */\n"                                               \
+    "      c = clamp(c + (c - " V3 "(l)) * 0.30, 0.0, 1.0);\n"                                                         \
+    "      c = pow(clamp(c, 0.0, 1.0), " V3 "(1.08));\n"                                                               \
+    "      c = clamp((c - 0.5) * 1.10 + 0.5, 0.0, 1.0);\n"                                                             \
     "    }\n"                                                                                                          \
     "  }\n"

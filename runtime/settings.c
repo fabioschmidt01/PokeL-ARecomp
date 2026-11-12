@@ -19,8 +19,10 @@ static const char *settings_file(void) {
 
 const char *const g_enemy_colour_modes[N_ENEMY_COLOUR_MODES] = {"Off", "Random per seed", "Random every load"};
 static const char *const k_enemy_colour_keys[N_ENEMY_COLOUR_MODES] = {"off", "seed", "load"};  // (larecomp.ini)
-const char *const g_screen_filters[N_SCREEN_FILTERS] = {"Off", "Game Boy", "Game Boy Color", "Grayscale"};
-static const char *const k_screen_filter_keys[N_SCREEN_FILTERS] = {"off", "gameboy", "gameboy_color", "grayscale"};  // (else: off)
+const char *const g_draw_distances[N_DRAW_DISTANCES] = {"Standard (1x)", "High (2.5x)", "Ultra (4x)"};
+static const char *const k_draw_distance_keys[N_DRAW_DISTANCES] = {"standard", "high", "ultra"};
+const char *const g_screen_filters[N_SCREEN_FILTERS] = {"Off", "Game Boy", "Game Boy Color", "Grayscale", "Hisui Vibrant", "Hisui Cinematic"};
+static const char *const k_screen_filter_keys[N_SCREEN_FILTERS] = {"off", "gameboy", "gameboy_color", "grayscale", "hisui_vibrant", "hisui_cinematic"};
 
 unsigned g_gpu_vendor;
 bool gpu_feature_on(int feature, const char *env) {
@@ -405,6 +407,9 @@ void settings_load(void) {
         else if (!strcmp(key, "screen_filter")) {
             for (int i = 0; i < N_SCREEN_FILTERS; i++) if (!strcmp(val, k_screen_filter_keys[i])) g_settings.screen_filter = i;
         }
+        else if (!strcmp(key, "draw_distance")) {
+            for (int i = 0; i < N_DRAW_DISTANCES; i++) if (!strcmp(val, k_draw_distance_keys[i])) g_settings.draw_distance = i;
+        }
         else if (!strcmp(key, "enemy_colours")) {
             for (int i = 0; i < N_ENEMY_COLOUR_MODES; i++) if (!strcmp(val, k_enemy_colour_keys[i])) g_settings.enemy_colours = i;
         }
@@ -516,6 +521,7 @@ void settings_save(void) {
     }
     fprintf(f, "enemy_colours = %s\n", k_enemy_colour_keys[g_settings.enemy_colours]);
     fprintf(f, "screen_filter = %s\n", k_screen_filter_keys[g_settings.screen_filter]);
+    fprintf(f, "draw_distance = %s\n", k_draw_distance_keys[g_settings.draw_distance]);
     bind_settings_save(f);
     fprintf(f, "rando_seed = %s\n", g_settings.rando_seed);
     if (g_settings.rando_options[0]) fprintf(f, "rando_options = %s\n", g_settings.rando_options);

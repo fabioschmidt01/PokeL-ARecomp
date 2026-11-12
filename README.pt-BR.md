@@ -127,6 +127,21 @@ Junto com as releases é distribuído o **PokeL-Extractor** (`PokeL-Extractor.ex
 - **Destravamento Real de FPS (Modo Ilimitado)**: Remoção das pausas de 16,66 ms em `present_pace` e liberação do limitador do delta-time dinâmico até 4,16 ms (240 FPS) quando o VSync é definido como *Desligado (Ilimitado)*. O jogo agora roda acima de 60 FPS com velocidade 1.0x perfeita!
 - **Proteção Contra Sobreposição de Textos na Interface**: Corrigida a colisão de textos em `option_rows` com aplicação de clipping visual entre rótulos e valores, além de simplificação dos nomes das opções de VSync no menu.
 
+### v0.26.1 (Recente)
+- **Distância de Visão Nativa em C (Draw Distance)**: Controle de distância de renderização integrado no motor sem alterar arquivos no disco e sem depender de mods externos:
+  - *Padrão (1x)*: Configurações originais do Nintendo Switch.
+  - *Alta (2.5x - Recomendada)*: Raio de visão de Pokémon selvagens e NPCs aumentado de 40m/60m para 100m; alcance das árvores aumentado de 200m para 500m.
+  - *Ultra (4x - Máxima)*: Raio de Pokémon e NPCs aumentado para 150m; alcance de árvores aumentado para 800m.
+  - Aplicação dinâmica em memória sobre o arquivo `field_common_config.bin` durante o carregamento de RomFS.
+- **Realce de Cores de Hisui (Tonemapper no Vulkan)**:
+  - *Hisui Vívido (Recomendado)*: Remove o véu cinza/desbotado original do Switch, adicionando saturação natural (+20%) e curva de contraste no passo de apresentação da GPU sem nenhum custo de CPU.
+  - *Hisui Cinematográfico*: Contraste mais dramático e tons densos para céus vibrantes e montanhas épicas.
+  - Disponível nas abas **Vídeo Avançado** > **Realce de Cores** e **Cosméticos** > **Filtro de Tela**.
+- **Sistema de Backup Automático Rotacional de Saves**:
+  - Cria automaticamente backups com data e hora (`save/backups/main_YYYYMMDD_HHMMSS.bak`) a cada salvamento confirmado pelo jogo.
+  - Rotação inteligente mantém as 10 cópias mais recentes, blindando o jogador contra quedas de energia ou perdas acidentais de progresso.
+- **PokeL-Extractor com Árvore Completa de RomFS**: O extrator agora extrai a árvore de diretórios descompactada (`romfs/...`) pronta para uso, sem arquivos residuais em `.bin`.
+
 ### v0.0.25
 - **Divisão do Menu de Vídeo**: Separação completa entre a aba **Vídeo** (exibição, resolução, taxa de quadros e VSync) e a nova aba **Vídeo Avançado** (XeSS, FSR, Geração de Quadros, sombras, oclusão ambiental, reflexos e iluminação indireta).
 - **Seletor Explícito de VSync**: Três opções diretas com recriação instantânea da swapchain Vulkan:

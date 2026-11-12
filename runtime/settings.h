@@ -132,12 +132,15 @@ typedef struct {
     int ui_lang;      // UI_LANG_*: the start screen's language (runtime/ui/launcher.mm); auto = the system's
     // mods/ folders (runtime/services/fs.c layers them): '|' between names. order: first wins where two replace the
     // same file (folders not listed come after, by name); off: not loaded. Edited on the start screen's Mods page.
+    int draw_distance;        // DRAW_DISTANCE_*: 0 Standard (1x), 1 High (2.5x), 2 Ultra (4x)
     char mods_order[1024];
     char mods_off[1024];
 } Settings;
 
 
-enum { N_ENEMY_COLOUR_MODES = 3, N_SCREEN_FILTERS = 4 };
+enum { DRAW_DISTANCE_STANDARD = 0, DRAW_DISTANCE_HIGH = 1, DRAW_DISTANCE_ULTRA = 2, N_DRAW_DISTANCES = 3 };
+extern const char *const g_draw_distances[N_DRAW_DISTANCES];
+enum { N_ENEMY_COLOUR_MODES = 3, N_SCREEN_FILTERS = 6 };
 extern const char *const g_screen_filters[N_SCREEN_FILTERS];  // (the menu's names)
 extern const char *const g_enemy_colour_modes[N_ENEMY_COLOUR_MODES];  // (the menu's names)
 enum { UI_LANG_AUTO = 0, UI_LANG_EN = 1, UI_LANG_PT = 2 };

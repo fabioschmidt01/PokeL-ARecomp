@@ -715,6 +715,19 @@ static void tab_video_advanced(bool in_game) {
     }
 
     opt_section(TR("Graphics Quality & Textures", "Qualidade Gráfica e Texturas"));
+    {
+        const char *sf_names[] = {
+            TR("Off (Original)", "Desligado (Original)"),
+            "Game Boy",
+            "Game Boy Color",
+            TR("Grayscale", "Escala de Cinza"),
+            TR("Hisui Vibrant (Recommended)", "Hisui Vívido (Recomendado)"),
+            TR("Hisui Cinematic", "Hisui Cinematográfico")
+        };
+        opt_choice(TR("Color enhancement", "Realce de cores"), &g_settings.screen_filter, sf_names, N_SCREEN_FILTERS, 0,
+                   TR("Tonemapper and vibrance filter in Vulkan to eliminate the washed-out gray haze of Hisui.",
+                      "Filtro de tonemapper e vibração no Vulkan para eliminar a névoa cinza e desbotada de Hisui."));
+    }
     {   // HD texture pack (textures/hd: runtime/nvn/vulkan/textures.c hd_switch, tools/za/hd_pack.py): switches at once
         int tx = g_settings.tex_hd ? 1 : 0;
         const char *tex[] = {TR("Original", "Originais"), "HD"};
@@ -882,9 +895,20 @@ static void tab_cosmetics(void) {
         opt_choice("Enemy colors", &g_settings.enemy_colours, modes, N_ENEMY_COLOUR_MODES, 0,
                    "Each kind of enemy in another color. Enemies whose color shows their strength or type keep theirs.");
     }
-    opt_section("Screen");
-    opt_choice("Screen filter", &g_settings.screen_filter, g_screen_filters, N_SCREEN_FILTERS, 0,
-               "A filter over the whole picture, the HUD included.");
+    opt_section(TR("Screen & Colors", "Tela e Cores"));
+    {
+        const char *sf_names[] = {
+            TR("Off (Original)", "Desligado (Original)"),
+            "Game Boy",
+            "Game Boy Color",
+            TR("Grayscale", "Escala de Cinza"),
+            TR("Hisui Vibrant (Recommended)", "Hisui Vívido (Recomendado)"),
+            TR("Hisui Cinematic", "Hisui Cinematográfico")
+        };
+        opt_choice(TR("Screen filter", "Filtro de tela"), &g_settings.screen_filter, sf_names, N_SCREEN_FILTERS, 0,
+                   TR("A filter over the whole picture, the HUD included.",
+                      "Um filtro sobre toda a imagem, incluindo a interface HUD."));
+    }
     opt_end();
 }
 
@@ -957,6 +981,17 @@ static void tab_game(void) {
                       "Start Screen, then Play. (A translation mod, like a PT-BR one, goes in Mods on the start screen.)",
                       "O idioma dos textos do jogo, como a configuração do próprio sistema. Vale quando o jogo reinicia: "
                       "Sair > Tela inicial, depois Jogar. (Um mod de tradução, como o PT-BR, vai em Mods na tela inicial.)"));
+    }
+    opt_section(TR("Draw Distance & Hisui World", "Distância de Visão e Mundo de Hisui"));
+    {
+        const char *dd_names[] = {
+            TR("Standard (1x - Switch)", "Padrão (1x - Switch)"),
+            TR("High (2.5x - Recommended)", "Alta (2.5x - Recomendada)"),
+            TR("Ultra (4x - Maximum)", "Ultra (4x - Máxima)")
+        };
+        opt_choice(TR("Draw distance", "Distância de visão"), &g_settings.draw_distance, dd_names, N_DRAW_DISTANCES, DRAW_DISTANCE_HIGH,
+                   TR("Expands render distance for wild Pokémon, NPCs, and trees across Hisui in native C code without pop-in. Takes effect on next area load.",
+                      "Amplia a distância de renderização de Pokémon selvagens, NPCs e árvores em Hisui nativamente em código C sem pop-in. Aplica ao carregar a próxima área."));
     }
     opt_section(TR("This menu", "Este menu"));
     opt_button(TR("Shortcuts", "Atalhos"),

@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 #ifdef _WIN32
 #include <io.h>
@@ -148,6 +149,11 @@ typedef struct { uint64_t off, size; char *path; uint32_t meta; } RomFile;
 static RomFile *rom_files;
 static int rom_nfiles;
 static uint64_t rom_data_off;
+static uint64_t g_field_cfg_off;
+static uint64_t g_field_cfg_size;
+static uint64_t g_field_cfg_ov_off;
+static uint64_t g_field_cfg_ov_size;
+static bool g_field_cfg_patched_log;
 
 // A seed replaces ~850 files and adds more: each is opened when it's read and kept in a small cache like the base
 // files', never all at once. They used to stay open until reboot, which ran into the open-file limit (256 for a
@@ -213,6 +219,9 @@ RT_ON_RESET(fs_reset) {
     ov_meta = NULL, ov_meta_off = ov_meta_size = ov_end = 0;
     npatches = 0;
     rom_files = NULL, rom_nfiles = 0, rom_data_off = 0;
+    g_field_cfg_off = 0, g_field_cfg_size = 0;
+    g_field_cfg_ov_off = 0, g_field_cfg_ov_size = 0;
+    g_field_cfg_patched_log = false;
     base_close();
     mounts_reset();  // (the old boot's mounts are gone with it)
     g_save_dir = "save";
@@ -737,14 +746,131 @@ static void rom_index(void) {
         LOG("[xbox-layout] %d battle resource overlay mounted\n", replaced);
     }
     qsort(rom_files, rom_nfiles, sizeof *rom_files, rom_cmp);
+    g_field_cfg_off = 0;
+    g_field_cfg_size = 0;
+    for (int i = 0; i < rom_nfiles; i++) {
+        if (!strcmp(rom_files[i].path, "bin/misc/app_config/field_common_config.bin")) {
+            g_field_cfg_off = rom_files[i].off;
+            g_field_cfg_size = rom_files[i].size;
+            break;
+        }
+    }
+    g_field_cfg_ov_off = 0;
+    g_field_cfg_ov_size = 0;
+    for (int i = 0; i < ov_n; i++) {
+        if (ov[i].path && strstr(ov[i].path, "field_common_config.bin")) {
+            g_field_cfg_ov_off = ov[i].start;
+            g_field_cfg_ov_size = ov[i].size;
+            break;
+        }
+    }
+    if (g_field_cfg_off || g_field_cfg_ov_off) {
+        LOG("[fs] tracked field_common_config.bin (base 0x%llx [%llu B], ov 0x%llx [%llu B])\n",
+            (unsigned long long)g_field_cfg_off, (unsigned long long)g_field_cfg_size,
+            (unsigned long long)g_field_cfg_ov_off, (unsigned long long)g_field_cfg_ov_size);
+    }
     free(dmeta);
     free(fmeta);
     LOG("[fs] romfs index: %d files\n", rom_nfiles);
 }
 
+static void *mem_find(const void *buf, size_t blen, const void *pat, size_t plen) {
+    if (!buf || !pat || plen == 0 || blen < plen) return NULL;
+    const uint8_t *b = (const uint8_t *)buf;
+    const uint8_t *p = (const uint8_t *)pat;
+    size_t last = blen - plen;
+    for (size_t i = 0; i <= last; i++) {
+        if (b[i] == p[0] && !memcmp(b + i, p, plen)) return (void *)(b + i);
+    }
+    return NULL;
+}
+
+static void pla_patch_field_cfg_range(uint8_t *dst, uint64_t size, uint64_t off, uint64_t f_start, uint64_t f_size) {
+    if (!f_start || !f_size) return;
+    if (off + size <= f_start || off >= f_start + f_size) return;
+
+    const char *poke_rad = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "150" : "100";
+    const char *npc_rad  = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "150" : "100";
+    const char *tree_vis = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "800" : "500";
+    uint32_t len3 = 3;
+
+    struct PatchEntry {
+        uint64_t file_offset;
+        const void *data;
+        size_t len;
+    } p[] = {
+        { 152, &len3, 4 },
+        { 156, poke_rad, 4 },
+        { 280, &len3, 4 },
+        { 284, npc_rad, 4 },
+        { 1624, &len3, 4 },
+        { 1628, tree_vis, 4 }
+    };
+
+    for (size_t i = 0; i < sizeof(p) / sizeof(p[0]); i++) {
+        uint64_t p_start = f_start + p[i].file_offset;
+        uint64_t p_end = p_start + p[i].len;
+        uint64_t a = (off > p_start) ? off : p_start;
+        uint64_t b = (off + size < p_end) ? off + size : p_end;
+        if (a < b) {
+            memcpy(dst + (a - off), (const uint8_t *)p[i].data + (a - p_start), (size_t)(b - a));
+        }
+    }
+    if (!g_field_cfg_patched_log) {
+        g_field_cfg_patched_log = true;
+        LOG("[draw-distance] applied native C %s draw distance preset to field_common_config.bin (NPC/Poke: %s, Tree: %s)\n",
+            g_draw_distances[g_settings.draw_distance], poke_rad, tree_vis);
+    }
+}
+
+static void pla_draw_distance_filter(uint8_t *dst, uint64_t size, uint64_t off) {
+    if (g_settings.draw_distance <= DRAW_DISTANCE_STANDARD || !dst || size < 4) return;
+
+    if (g_field_cfg_off) pla_patch_field_cfg_range(dst, size, off, g_field_cfg_off, g_field_cfg_size);
+    if (g_field_cfg_ov_off) pla_patch_field_cfg_range(dst, size, off, g_field_cfg_ov_off, g_field_cfg_ov_size);
+
+    if (size >= 180 + 24) {
+        const char *sig1 = "kArea00NpcPokeLoadRadius";
+        uint8_t *p1 = (uint8_t *)mem_find(dst, (size_t)size, sig1, strlen(sig1));
+        if (p1 && (size_t)(p1 - dst) >= 28) {
+            const char *poke_rad = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "150" : "100";
+            const char *npc_rad  = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "150" : "100";
+            const char *tree_vis = (g_settings.draw_distance >= DRAW_DISTANCE_ULTRA) ? "800" : "500";
+            uint32_t len3 = 3;
+
+            memcpy(p1 - 28, &len3, 4);
+            memcpy(p1 - 24, poke_rad, 4);
+
+            const char *sig2 = "kArea00NpcLoadRadius";
+            uint8_t *p2 = (uint8_t *)mem_find(dst, (size_t)size, sig2, strlen(sig2));
+            if (p2 && (size_t)(p2 - dst) >= 28) {
+                memcpy(p2 - 28, &len3, 4);
+                memcpy(p2 - 24, npc_rad, 4);
+            }
+
+            const char *sig3 = "kTreeVisibleDistance";
+            uint8_t *p3 = (uint8_t *)mem_find(dst, (size_t)size, sig3, strlen(sig3));
+            if (p3 && (size_t)(p3 - dst) >= 36) {
+                memcpy(p3 - 36, &len3, 4);
+                memcpy(p3 - 32, tree_vis, 4);
+            }
+
+            if (!g_field_cfg_patched_log) {
+                g_field_cfg_patched_log = true;
+                LOG("[draw-distance] applied native C %s draw distance preset to field_common_config.bin (NPC/Poke: %s, Tree: %s)\n",
+                    g_draw_distances[g_settings.draw_distance], poke_rad, tree_vis);
+            }
+        }
+    }
+}
+
 // Virtual RomFS image read: original bytes, with the patched file table and appended replacement files.
 static ssize_t romfs_read(uint8_t *dst, uint64_t size, uint64_t off) {
-    if (!ov_n && !npatches) return base_pread(dst, size, off);
+    if (!ov_n && !npatches) {
+        ssize_t ret = base_pread(dst, size, off);
+        if (ret > 0) pla_draw_distance_filter(dst, (uint64_t)ret, off);
+        return ret;
+    }
     uint64_t done = 0;
     while (done < size) {
         uint64_t o = off + done, n = size - done;
@@ -792,6 +918,7 @@ static ssize_t romfs_read(uint8_t *dst, uint64_t size, uint64_t off) {
         }
         done += n;
     }
+    if (done > 0) pla_draw_distance_filter(dst, done, off);
     return (ssize_t)done;
 }
 
@@ -1067,6 +1194,77 @@ static void drop_slot(const char *path) {
     unlink(pending);
     unlink(flags_pending);
 }
+static int save_backup_cmp(const void *a, const void *b) {
+    return strcmp((const char *)a, (const char *)b);
+}
+
+static void save_auto_backup(const char *path) {
+    if (!path || !strstr(path, "main")) return;
+    mkdir("save", 0755);
+    mkdir("save/backups", 0755);
+
+    FILE *in = fopen(path, "rb");
+    if (!in) return;
+    fseek(in, 0, SEEK_END);
+    long sz = ftell(in);
+    fseek(in, 0, SEEK_SET);
+    if (sz <= 0) { fclose(in); return; }
+
+    uint8_t *buf = malloc((size_t)sz);
+    if (!buf) { fclose(in); return; }
+    if (fread(buf, 1, (size_t)sz, in) != (size_t)sz) {
+        free(buf);
+        fclose(in);
+        return;
+    }
+    fclose(in);
+
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    char dest[512];
+    if (tm) {
+        snprintf(dest, sizeof dest, "save/backups/main_%04d%02d%02d_%02d%02d%02d.bak",
+                 tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+                 tm->tm_hour, tm->tm_min, tm->tm_sec);
+    } else {
+        snprintf(dest, sizeof dest, "save/backups/main_%llu.bak", (unsigned long long)now);
+    }
+
+    FILE *out = fopen(dest, "wb");
+    if (out) {
+        fwrite(buf, 1, (size_t)sz, out);
+        fclose(out);
+        LOG("[save-backup] created automatic backup %s (%ld bytes)\n", dest, sz);
+    }
+    free(buf);
+
+    DIR *d = opendir("save/backups");
+    if (d) {
+        struct dirent *e;
+        char names[128][256];
+        int count = 0;
+        while ((e = readdir(d)) != NULL && count < 128) {
+            if (strstr(e->d_name, "main_") && strstr(e->d_name, ".bak")) {
+                strncpy(names[count], e->d_name, sizeof(names[count]) - 1);
+                names[count][sizeof(names[count]) - 1] = 0;
+                count++;
+            }
+        }
+        closedir(d);
+
+        if (count > 10) {
+            qsort(names, (size_t)count, sizeof(names[0]), save_backup_cmp);
+            int to_delete = count - 10;
+            for (int i = 0; i < to_delete; i++) {
+                char old_file[512];
+                snprintf(old_file, sizeof old_file, "save/backups/%s", names[i]);
+                unlink(old_file);
+                LOG("[save-backup] pruned old backup %s\n", old_file);
+            }
+        }
+    }
+}
+
 // Commit always succeeds for the game (see save_failed). A save that failed is dropped whole. If only the sidecar's
 // rename failed (the data is already replaced), its working copy stays for the next mount to finish the pair.
 static void commit(HostFs *fs) {
@@ -1087,7 +1285,10 @@ static void commit(HostFs *fs) {
                 save_failed(fs, "could not commit", path, error);
             } else LOG("[save] committed %s, but not its flags sidecar yet (%s): the next mount finishes it\n", path,
                        strerror(error));
-        } else LOG("[save] committed %s\n", path);
+        } else {
+            LOG("[save] committed %s\n", path);
+            save_auto_backup(path);
+        }
     }
     fs->npending = 0;
 }

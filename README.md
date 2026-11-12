@@ -127,6 +127,21 @@ Bundled with every release is **PokeL-Extractor** (`PokeL-Extractor.exe`), a sta
 - **True Uncapped FPS Support**: Unlocked presentation pacing in `present_pace` and scaled dynamic delta-time floor down to 4.16 ms (240 FPS) when VSync is set to *Off (Uncapped)*, enabling framerates to soar beyond 60 FPS without game speed acceleration.
 - **UI Text Overlap Protection**: Fixed text collision in `option_rows` by enforcing strict clipping boundaries between option labels, navigation chevrons, and value texts, while shortening VSync options for crystal-clear readability.
 
+### v0.26.1 (Latest)
+- **Native C Draw Distance Scaling**: In-engine draw distance control in C without modifying files on disk or relying on external mods:
+  - *Standard (1x)*: Original Nintendo Switch settings.
+  - *High (2.5x - Recommended)*: Wild Pokémon and NPC spawn radius increased from 40m/60m to 100m; tree rendering distance increased from 200m to 500m.
+  - *Ultra (4x - Maximum)*: Wild Pokémon and NPC radius increased to 150m; tree rendering distance increased to 800m.
+  - Dynamically patches `field_common_config.bin` in memory during RomFS load with zero filesystem footprint.
+- **Hisui Color Tonemapper (Vulkan Post-Processing)**:
+  - *Hisui Vibrant (Recommended)*: Removes the washed-out gray haze of the original game, adding natural color saturation (+20%) and contrast curve on the GPU presentation pass with zero CPU overhead.
+  - *Hisui Cinematic*: Richer contrast and deeper atmospheric tones for dramatic skies and wild landscapes.
+  - Accessible in **Advanced Video** > **Color Enhancement** and **Cosmetics** > **Color Filter**.
+- **Automatic Save Rotation & Backup System**:
+  - Automatically creates timestamped backups (`save/backups/main_YYYYMMDD_HHMMSS.bak`) whenever the game commits save data.
+  - Automatic rotation keeps the 10 most recent backups to safeguard against power loss or corruption.
+- **PokeL-Extractor Recursive RomFS Tree**: Extractor now unpacks the complete decrypted RomFS directory tree (`romfs/...`) directly, eliminating raw `.bin` archives and preparing the directory structure ready for gameplay.
+
 ### v0.0.25
 - **Menu Reorganization**: Separated into dedicated **Video** (Display, Resolution, Framerate, VSync) and **Advanced Video** (XeSS, FSR, Frame Gen, Shadows, Ambient Occlusion, SSR, SSGI) tabs.
 - **Explicit VSync Selector**: Direct control over swapchain presentation modes:
