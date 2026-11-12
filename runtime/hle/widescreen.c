@@ -16,6 +16,23 @@ static float g_wide = 1.0f;  // output aspect divided by 16:9 (1 = normal)
 void widescreen_set_factor(float f) { g_wide = f; }
 float widescreen_factor(void) { return g_wide; }
 
+// Pokémon Legends: Arceus: its perspective cameras' aspect, read by the projection builder (tools/pla_patches.py,
+// 0x7002994e2c; the math: widescreen_proj.h). Every 16:9 camera follows the window's shape - the main view, battles,
+// cutscenes - so the picture fills the reshaped render targets unstretched, and what the game derives from the built
+// matrix sees the wider view too. The aspect field itself keeps the game's 16:9. LARECOMP_NO_WIDESCREEN=1 (or F1 > Aspect ratio > Original 16:9): g_wide stays 1, the game's own
+// projection. Before (v0.26.5) the vertex uniforms were rescaled after the fact (exec.c), which missed the camera.
+#include "widescreen_proj.h"
+float rt_pla_proj_aspect(float aspect, float *half_fovy) {
+    float wide = g_wide, a = widescreen_proj_aspect(aspect, wide, half_fovy);
+    static float logged = 1.0f;  // (once per shape: the camera that took it)
+    if (a != aspect && wide != logged) {
+        logged = wide;
+        LOG("[widescreen] camera aspect %.4f -> %.4f (output %.3f x 16:9%s)\n", aspect, a, wide,
+            wide < 1.0f ? ", taller: vertical view widened" : "");
+    }
+    return a;
+}
+
 // Effects drawn as a mesh around the camera, sized to cover a 16:9 view: with the widened camera their outer edge
 // shows (Mysterious Woods fog ring: a hard-edged oval at 32:9, a stray cloud piece at the far left). Their draws
 // get a viewport widened by the widescreen factor (centred), so they cover the window as they cover 16:9.
@@ -55,6 +72,28 @@ bool widescreen_ui_pane_partial(const float *u, uint64_t size) {
         for (int k = 0; k < 2; k++) lo[k] = fminf(lo[k], n[k]), hi[k] = fmaxf(hi[k], n[k]);
     }
     return lo[0] > -0.99f || hi[0] < 0.99f || lo[1] > -0.99f || hi[1] < 0.99f;
+}
+
+// Pokémon Legends: Arceus draws its HUD (ui2d layout panes, as above) into a 1920x1080 composite target that the
+// renderer reshaped like the scene, and copies that to the window texture: exec.c's "UI goes in a centred 16:9 box"
+// (draws into the window texture) never sees it, and every pane came out stretched across the wider target (32:9:
+// round Poké Balls 2x wide, issue #1). Its panes that don't cover the screen get that box too, so the HUD keeps the
+// game's own layout and shape; full-screen panes (fades, menu backdrops) still fill the window. Its text (labels,
+// counts: "Poké Balls", "48") is drawn by the font renderer, not as a pane: 128-byte vertex uniforms whose first 16
+// floats are the layout's projection and the text's place in one matrix (rows, y down: scale / 960, -scale / 540, the
+// translation in the last column; found 2026-11-12 with LARECOMP_DEBUG_FRAME + LARECOMP_DEBUG_DATA) - boxed alike.
+// LARECOMP_WIDE_UI_BOX=0: as before (stretched).
+static bool ui_text_draw(const float *u, uint64_t size) {
+    if (!u || size != 128) return false;
+    if (u[12] != 0 || u[13] != 0 || u[14] != 0 || u[15] != 1) return false;  // (affine: no 3D view-projection)
+    if (u[1] != 0 || u[2] != 0 || u[4] != 0 || u[6] != 0 || u[8] != 0 || u[9] != 0) return false;  // (unrotated, flat)
+    float sx = u[0] * 960, sy = fabsf(u[5]) * 540;  // the same scale in the 1920x1080 layout's units, both ways
+    return sx > 0.05f && sx < 20 && fabsf(sx - sy) < 1e-3f * sx;
+}
+bool widescreen_ui_boxed(const float *u, uint64_t size) {
+    static int on = -1;
+    if (on < 0) on = !ENV("LARECOMP_WIDE_UI_BOX") || atoi(ENV("LARECOMP_WIDE_UI_BOX")) != 0;
+    return on && !g_game_is_la && (widescreen_ui_pane_partial(u, size) || ui_text_draw(u, size));
 }
 
 // Off in rooms that should keep 16:9 framing (interiors, dungeons) -- see widescreen_update.
@@ -157,6 +196,10 @@ static bool level_is_interior(void) {
 }
 
 bool widescreen_frame_boxed(uint64_t frame) {
+    // Another game (Pokémon Legends: Arceus): nothing below applies - game_in_play() is Link's Awakening's and is 0
+    // there, which boxed every frame: the centre 1/wide of the reshaped image drawn into a 16:9 box (issue #1, 32:9:
+    // black bars beside a 2x stretched picture). Its cameras follow the window (rt_pla_proj_aspect): the whole image.
+    if (!g_game_is_la) return false;
     static bool last;
     static uint64_t interior_until;  // keep boxing briefly after leaving: the first (dark) frames still show stale sides
     bool in = level_is_interior();
