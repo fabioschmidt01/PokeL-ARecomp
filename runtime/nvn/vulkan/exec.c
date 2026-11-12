@@ -3939,25 +3939,70 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
     if ((si->cbuf_dynamic & (1u << k)) && r.size) size = r.size > 0x10000 ? 0x10000 : r.size;
     if (size > r.size && r.size) size = r.size;
     if (size < 16) size = 16;
-    if (stage == 0 && idx == 2 && size >= 64 && fsr2_scene_pass() && r.addr) {
-        const float *m = (const float *)(uintptr_t)r.addr;
-        if (m[12] != 0.0f || m[13] != 0.0f || m[14] != 0.0f) {
-            if (g_settings.fov >= FOV_MIN && g_settings.fov <= FOV_MAX && g_settings.fov != FOV_DEFAULT) {
-                static struct { uint64_t addr, seq; int fov; VkSpan span; } fov_cache;
-                uint64_t seq = vk_pending_seq();
-                if (fov_cache.addr == r.addr && fov_cache.seq == seq && fov_cache.fov == g_settings.fov) {
-                    return ubo_span(fov_cache.span, size);
+    if (stage == 0 && r.addr && size >= 64) {
+        extern float widescreen_factor(void);
+        float wide = widescreen_factor();
+        if (wide <= 0.0f) wide = 1.0f;
+        float fov_scale = 1.0f;
+        if (g_settings.fov >= FOV_MIN && g_settings.fov <= FOV_MAX && g_settings.fov != FOV_DEFAULT) {
+            fov_scale = tanf(30.0f * (float)M_PI / 180.0f) / tanf(((float)g_settings.fov * 0.5f) * (float)M_PI / 180.0f);
+        }
+        if (fov_scale != 1.0f || wide > 1.001f) {
+            float sx = fov_scale / wide;
+            float sy = fov_scale;
+            const float *u = (const float *)(uintptr_t)r.addr;
+            bool is_cam_ubo = false;
+            int proj_offset = -1;
+            int vp_offset = -1;
+
+            if (size >= 320 && fabsf(u[30] + 1.0f) < 1e-3f && fabsf(u[31]) < 1e-5f) {
+                is_cam_ubo = true;
+                proj_offset = 16;
+                vp_offset = 32;
+            } else if (size >= 64 && (u[12] != 0.0f || u[13] != 0.0f || u[14] != 0.0f)) {
+                float dir_len_sq = u[12]*u[12] + u[13]*u[13] + u[14]*u[14];
+                if (dir_len_sq > 0.1f && dir_len_sq < 10.0f && fabsf(u[15]) < 1e5f) {
+                    is_cam_ubo = true;
+                    vp_offset = 0;
                 }
-                float fov_scale = tanf(30.0f * (float)M_PI / 180.0f) / tanf(((float)g_settings.fov * 0.5f) * (float)M_PI / 180.0f);
+            }
+
+            if (is_cam_ubo) {
+                static struct { uint64_t addr, seq; int fov; float wide; VkSpan span; } fov_cache[18];
+                uint64_t seq = vk_pending_seq();
+                int cidx = (idx >= 0 && idx < 18) ? idx : 0;
+                if (fov_cache[cidx].addr == r.addr && fov_cache[cidx].seq == seq &&
+                    fov_cache[cidx].fov == g_settings.fov && fabsf(fov_cache[cidx].wide - wide) < 1e-4f) {
+                    return ubo_span(fov_cache[cidx].span, size);
+                }
                 float stack_cbuf[1024];
                 void *buf = size <= sizeof(stack_cbuf) ? (void *)stack_cbuf : malloc(size);
                 if (buf) {
                     memcpy(buf, (const void *)(uintptr_t)r.addr, size);
                     float *f = (float *)buf;
-                    for (int i = 0; i < 8; i++) f[i] *= fov_scale;
+                    if (proj_offset >= 0 && (uint64_t)(proj_offset + 16) * sizeof(float) <= size) {
+                        f[proj_offset + 0] *= sx;
+                        f[proj_offset + 5] *= sy;
+                    }
+                    if (vp_offset >= 0 && (uint64_t)(vp_offset + 16) * sizeof(float) <= size) {
+                        for (int i = 0; i < 4; i++) f[vp_offset + i] *= sx;
+                        for (int i = 4; i < 8; i++) f[vp_offset + i] *= sy;
+                    }
                     VkSpan s = vk_transient_copy(buf, size, 256);
                     if (buf != stack_cbuf) free(buf);
-                    fov_cache.addr = r.addr; fov_cache.seq = seq; fov_cache.fov = g_settings.fov; fov_cache.span = s;
+                    fov_cache[cidx].addr = r.addr;
+                    fov_cache[cidx].seq = seq;
+                    fov_cache[cidx].fov = g_settings.fov;
+                    fov_cache[cidx].wide = wide;
+                    fov_cache[cidx].span = s;
+                    static int s_logged_fov = -1;
+                    static float s_logged_wide = -1.0f;
+                    if (s_logged_fov != g_settings.fov || fabsf(s_logged_wide - wide) > 1e-3f) {
+                        LOG("[fov] camera matrix scaling active (idx=%d, size=%llu): fov=%d wide=%.2f -> sx=%.3f sy=%.3f\n",
+                            idx, (unsigned long long)size, g_settings.fov, wide, sx, sy);
+                        s_logged_fov = g_settings.fov;
+                        s_logged_wide = wide;
+                    }
                     return ubo_span(s, size);
                 }
             }
