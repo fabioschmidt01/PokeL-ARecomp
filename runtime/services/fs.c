@@ -256,7 +256,7 @@ static void rom_dir_path(const uint8_t *dmeta, uint32_t dsize, uint32_t dir, cha
 // Pokémon Z-A keeps its files in packs (arc/data.trpfs) listed by arc/data.trpfd, and reads a file from the RomFS
 // only when the list doesn't have it: so the game's data.trpfd is served without the layered files' entries
 // (trpfd_unlist). A mod's own data.trpfd is never used (it's made for the mod's game version).
-static char layer_root[17][1100];  // seed + optional Xbox presentation + 15 user mods
+static char layer_root[32][1100];  // seed + prompt overlay + optional Xbox presentation + 15 user mods
 static int nlayers = -1;
 static bool trinity;  // the RomFS has arc/data.trpfd
 static uint8_t *xbox_arc;
@@ -329,6 +329,26 @@ static void layer_init(void) {
     if (nlayers >= 0) return;
     nlayers = 0;
     settings_load();
+
+    // Native Controller Prompts overlay (PlayStation, Xbox, Steam Deck) for Pokémon Legends Arceus:
+    // Follows g_settings.prompts (Auto, Xbox, PlayStation, Steam Deck)
+    extern const char *pl_prompt_set(void);
+    const char *prompt_style = pl_prompt_set();
+    if (prompt_style && strcmp(prompt_style, "nintendo") != 0 && strcmp(prompt_style, "keyboard") != 0) {
+        char prompt_dir[1100];
+        snprintf(prompt_dir, sizeof prompt_dir, "textures/prompts/%s/romfs", prompt_style);
+        struct stat sb;
+        if (stat(prompt_dir, &sb) || !S_ISDIR(sb.st_mode)) {
+            if (!strcmp(prompt_style, "steamdeck")) {
+                snprintf(prompt_dir, sizeof prompt_dir, "textures/prompts/xbox/romfs");
+            }
+        }
+        if (!stat(prompt_dir, &sb) && S_ISDIR(sb.st_mode)) {
+            strlcpy(layer_root[nlayers++], prompt_dir, sizeof *layer_root);
+            LOG("[fs] native controller prompts overlay active: %s\n", prompt_dir);
+        }
+    }
+
     if (xbox_layer_prepare()) strlcpy(layer_root[nlayers++], XBOX_ATTACK_ROOT, sizeof *layer_root);
     const char *seed = rando_seed_dir();
     if (seed) snprintf(layer_root[nlayers++], sizeof *layer_root, "%s/romfs", seed);
