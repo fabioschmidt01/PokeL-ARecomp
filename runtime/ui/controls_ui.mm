@@ -375,13 +375,15 @@ extern "C" void controls_tab_draw(float scale) {
         opt_toggle("Controller light", &g_settings.controller_light, true, "The light bar shows Link's health.");
     {
         char autol[64];  // (what Auto stands for now: bind_prompts_auto, the same rule as runtime/hle/pl.c)
-        const char *names[] = {autol, "Nintendo", "Xbox", "PlayStation", TR("Keyboard", "Teclado"), "Steam Deck"};
-        snprintf(autol, sizeof autol, "Auto (%s)", names[bind_prompts_auto()]);
-        opt_choice(TR("Button icons", "Ícones dos botões"), &g_settings.prompts, names, 6, PROMPTS_AUTO,
-                   TR("The button icons the game shows. Auto: the connected controller's (the keyboard's with none). "
-                      "Applies from the next start.",
-                      "Os ícones de botões que o jogo mostra. Auto: os do controle conectado (os do teclado se não houver "
-                      "controle). Vale a partir do próximo início."));
+        const char *names[] = {autol, "Nintendo (Switch)", "Xbox", "PlayStation (DualSense / PS)", TR("Keyboard", "Teclado"), "Steam Deck"};
+        int cur_auto = bind_prompts_auto();
+        snprintf(autol, sizeof autol, "Auto [%s]", names[cur_auto]);
+        if (opt_choice(TR("Button icons", "Ícones dos botões"), &g_settings.prompts, names, 6, PROMPTS_AUTO,
+                   TR("The button icons the game shows. Auto dynamically matches your connected controller (PlayStation, Xbox, Switch, or Keyboard).",
+                      "Os ícones de botões mostrados pelo jogo. O modo Auto detecta dinamicamente seu controle conectado (PlayStation, Xbox, Switch ou Teclado)."))) {
+            settings_save();
+            launcher_prompts_refresh();
+        }
     }
     opt_toggle(TR("Battle moves by position", "Golpes por posição"), &g_settings.battle_abxy_position, false,
                TR("While ZL is held, the controller's A / B / X / Y go by position (the Switch's A on the right), so each "

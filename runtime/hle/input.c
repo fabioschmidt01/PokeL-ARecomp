@@ -375,6 +375,9 @@ void input_load_user_mappings(void) {
 // By SDL's own face-button labels for the type: the bottom button reads B on Nintendo pads, A on Xbox-style ones,
 // Cross on PlayStation ones.
 int input_family_of_type(int type) {
+    if (type == SDL_GAMEPAD_TYPE_PS3 || type == SDL_GAMEPAD_TYPE_PS4 || type == SDL_GAMEPAD_TYPE_PS5) return 2;
+    if (type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO || type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT ||
+        type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT || type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR) return 0;
     switch (SDL_GetGamepadButtonLabelForType((SDL_GamepadType)type, SDL_GAMEPAD_BUTTON_SOUTH)) {
     case SDL_GAMEPAD_BUTTON_LABEL_B: return 0;
     case SDL_GAMEPAD_BUTTON_LABEL_CROSS: return 2;

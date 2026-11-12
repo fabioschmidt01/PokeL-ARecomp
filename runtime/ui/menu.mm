@@ -1018,6 +1018,36 @@ static void tab_game(void) {
             pla_draw_distance_apply_live();
         }
     }
+    opt_section(TR("Active Mods & Translations", "Mods Ativos e Traduções"));
+    {
+        bool pt_active = false;
+        if (g_settings.mods_order[0]) {
+            const char *p = g_settings.mods_order;
+            while (*p) {
+                const char *bar = strchr(p, '|');
+                std::string n(p, bar ? (size_t)(bar - p) : strlen(p));
+                std::string low = n;
+                for (char &c : low) c = (char)tolower((unsigned char)c);
+                if (!settings_list_has(g_settings.mods_off, n.c_str()) &&
+                    (low.find("tradu") != std::string::npos || low.find("pt-br") != std::string::npos ||
+                     low.find("ptbr") != std::string::npos || low.find("portugu") != std::string::npos)) {
+                    pt_active = true;
+                    break;
+                }
+                if (!bar) break;
+                p = bar + 1;
+            }
+        }
+        if (pt_active) {
+            opt_button(TR("Portuguese Translation", "Tradução PT-BR"),
+                       TR("Active (RomFS LayeredFS · Priority #1). You can manage or disable mods on the start screen's Mods tab.",
+                          "Ativa (RomFS LayeredFS · Prioridade #1). Você pode gerenciar ou desativar mods na aba Mods da Tela Inicial."));
+        } else {
+            opt_button(TR("Active Mods", "Mods Ativos"),
+                       TR("No translation mod active. You can install and activate mods with 1 click on the start screen's Mods tab.",
+                          "Nenhum mod de tradução ativo no momento. Você pode instalar e ativar mods com 1 clique na aba Mods da Tela Inicial."));
+        }
+    }
     opt_section(TR("This menu", "Este menu"));
     opt_button(TR("Shortcuts", "Atalhos"),
                TR("Open / close: F1, Esc, the controller's Home / Xbox / PlayStation button, or Back + Start.\n"

@@ -103,7 +103,7 @@ static const char *build_version(const uint8_t id[8]) {
 static bool build_is_za(const uint8_t id[8]) { return build_version(id) && memcmp(id, BUILD_ID, 8); }
 // The release tag this build is (also names the release files; Makefile / tools/bundle_macos.sh / make_dmg.sh read
 // it): PokeL-ARecomp's v<major>.<minor>.<patch>.
-#define LARECOMP_VERSION "v0.26.2"
+#define LARECOMP_VERSION "v0.26.3"
 extern "C" const char *rt_version(void) { return LARECOMP_VERSION; }  // (runtime/main.c: the log's first line)
 extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }  // (the shader caches' tag)
 
@@ -1481,7 +1481,7 @@ static void panel(ImDrawList *dl, float x, float y, float w, float h, ImU32 fill
 
 // line icons, drawn (the fonts have none): size = the box's side in units, centred on cx, cy
 enum Icon { IC_NONE, IC_PLAY, IC_FOLDER, IC_UP_ARROW, IC_DOWN_ARROW, IC_CHECK, IC_CHEV_UP, IC_CHEV_DOWN, IC_TRASH,
-            IC_LAYERS, IC_SAVE, IC_RESTORE, IC_GLOBE };
+            IC_LAYERS, IC_SAVE, IC_RESTORE, IC_GLOBE, IC_GAMEPAD };
 static void icon(ImDrawList *dl, int k, float cx, float cy, float size, ImU32 col) {
     float u = size / 24, t = 2.0f * u * g_s;
     auto Q = [&](float x, float y) { return P(cx + (x - 12) * u, cy + (y - 12) * u); };
@@ -1522,6 +1522,14 @@ static void icon(ImDrawList *dl, int k, float cx, float cy, float size, ImU32 co
         dl->AddEllipse(Q(12, 12), ImVec2(4 * u * g_s, 9 * u * g_s), col, 0, 24, t);
         L(3, 12, 21, 12);
         break;
+    case IC_GAMEPAD: {
+        ImVec2 p[] = {Q(4, 9), Q(20, 9), Q(21, 15), Q(18, 20), Q(15, 19), Q(13, 14), Q(11, 14), Q(9, 19), Q(6, 20), Q(3, 15)};
+        dl->AddPolyline(p, 10, col, ImDrawFlags_Closed, t);
+        L(6, 12, 10, 12); L(8, 10, 8, 14);
+        dl->AddCircleFilled(Q(15, 12), 1.2f * u * g_s, col);
+        dl->AddCircleFilled(Q(18, 12), 1.2f * u * g_s, col);
+        break;
+    }
     }
 }
 // the project's mark: Arceus Celestial Wheel (Roda Celestial de Arceus)
@@ -2066,6 +2074,44 @@ static int mods_on_count(void) {
     int n = 0;
     for (auto &m : g_mods) n += m.on;
     return n;
+}
+
+extern "C" int input_family_of_type(int type);
+
+static bool is_ptbr_mod_name(const std::string &name) {
+    std::string low = name;
+    for (char &c : low) c = (char)tolower((unsigned char)c);
+    return low.find("tradu") != std::string::npos ||
+           low.find("pt-br") != std::string::npos ||
+           low.find("ptbr") != std::string::npos ||
+           low.find("portugu") != std::string::npos;
+}
+
+static int find_ptbr_mod_index(void) {
+    for (int i = 0; i < (int)g_mods.size(); i++) {
+        if (is_ptbr_mod_name(g_mods[i].name)) return i;
+    }
+    return -1;
+}
+
+static std::string active_controller_label(void) {
+    int n = 0;
+    SDL_JoystickID *ids = SDL_GetGamepads(&n);
+    if (!ids || n <= 0) {
+        if (ids) SDL_free(ids);
+        return TR("Keyboard & Mouse", "Teclado & Mouse");
+    }
+    const char *name = SDL_GetGamepadNameForID(ids[0]);
+    int type = SDL_GetGamepadTypeForID(ids[0]);
+    int fam = input_family_of_type(type);
+    SDL_free(ids);
+    const char *fam_str = fam == 2 ? "PlayStation" : fam == 1 ? "Xbox" : "Nintendo Switch";
+    if (name && *name) {
+        std::string nstr = name;
+        if (nstr.size() > 22) nstr = nstr.substr(0, 19) + "...";
+        return nstr + " (" + fam_str + ")";
+    }
+    return std::string(fam_str);
 }
 
 // ------------------------------------------------------------------ "Your team" (the Play page, from the player's save)
@@ -2827,6 +2873,7 @@ extern "C" void launcher_run(const char *root) {
                     char mods_t[64];
                     snprintf(mods_t, sizeof mods_t, on == 1 ? TR("1 mod on", "1 mod ativo") : TR("%d mods on", "%d mods ativos"), on);
                     cx += chip(dl, cx, ty, IC_LAYERS, mods_t) + 8;
+                    cx += chip(dl, cx, ty, IC_GAMEPAD, active_controller_label()) + 8;
                     if (g_save_time) chip(dl, cx, ty, IC_SAVE, std::string(TR("Save from ", "Save de ")) + fmt_time(g_save_time));
                     ty += 34 + 34;
                     bool pressed = button("##play", TR("PLAY", "JOGAR"), x, ty, 0, 68, BTN_PRIMARY, true, IC_PLAY, F_BTN, 26);
@@ -2891,10 +2938,22 @@ extern "C" void launcher_run(const char *root) {
                 dl->AddRectFilled(P(x + ts.x + 14, y + ts.y / 2 - 13), P(x + ts.x + 14 + cw, y + ts.y / 2 + 13),
                                   IM_COL32(63, 208, 201, 40), 13 * g_s);
                 text(dl, F_LABEL, 13, x + ts.x + 26, y + ts.y / 2 - text_size(F_LABEL, 13, cnt).y / 2, IM_COL32(127, 230, 224, 255), cnt);
-                if (button("##openmods", TR("Open mods folder", "Abrir pasta de mods"), x + w - 220, y + 6, 220, 44, BTN_SECONDARY,
+                float open_w = 200, en_w = 120, dis_w = 135, gap = 8;
+                float rx = x + w - open_w;
+                if (button("##openmods", TR("Open mods folder", "Abrir pasta de mods"), rx, y + 6, open_w, 44, BTN_SECONDARY,
                            true, IC_FOLDER)) {
                     mkdir("mods", 0755);
                     reveal_folder("mods");
+                }
+                rx -= (en_w + gap);
+                if (button("##enall", TR("Enable all", "Ativar todos"), rx, y + 6, en_w, 44, BTN_SECONDARY, !g_mods.empty())) {
+                    for (auto &m : g_mods) m.on = true;
+                    mods_store();
+                }
+                rx -= (dis_w + gap);
+                if (button("##disall", TR("Disable all", "Desativar todos"), rx, y + 6, dis_w, 44, BTN_GHOST, !g_mods.empty())) {
+                    for (auto &m : g_mods) m.on = false;
+                    mods_store();
                 }
                 y += ts.y + 10;
                 y += text(dl, F_BODY, 15, x, y, C_SOFT, TR("Mods replace the game's files (a romfs folder): translations, "
@@ -2904,6 +2963,70 @@ extern "C" void launcher_run(const char *root) {
                                                           "tradução, texturas, modelos. Mods que mexem no código do jogo "
                                                           "(exefs, IPS, cheats) não funcionam aqui. Se dois mods trocam o "
                                                           "mesmo arquivo, vale o que está mais acima."), w).y + 16;
+                // ---- Destaque Tradução PT-BR (1-Clique)
+                int pt_idx = find_ptbr_mod_index();
+                if (pt_idx >= 0) {
+                    float card_h = 70;
+                    bool pt_on = g_mods[pt_idx].on;
+                    bool pt_first = (pt_idx == 0);
+                    ImU32 card_bg = pt_on ? IM_COL32(10, 36, 44, 235) : IM_COL32(24, 28, 36, 220);
+                    ImU32 card_border = pt_on ? C_TEAL : IM_COL32(245, 158, 11, 140);
+                    panel(dl, x, y, w, card_h, card_bg, card_border);
+
+                    // Badge / Flag box
+                    dl->AddRectFilled(P(x + 14, y + 12), P(x + 58, y + 58), pt_on ? IM_COL32(63, 208, 201, 45) : IM_COL32(255, 255, 255, 14), 10 * g_s);
+                    ImVec2 bs = text_size(F_H2, 17, "BR");
+                    text(dl, F_H2, 17, x + 36 - bs.x / 2, y + 35 - bs.y / 2, pt_on ? C_TEAL : C_MUTED, "BR");
+
+                    // Title
+                    ImVec2 tit_sz = text(dl, F_LABEL, 17, x + 70, y + 12, C_TEXT, TR("Portuguese Translation (PT-BR)", "Tradução para Português (PT-BR)"));
+
+                    // Status Pill
+                    const char *badge_t = (pt_on && pt_first) ? TR("ACTIVE · TOP PRIORITY", "ATIVA · PRIORIDADE #1")
+                                        : pt_on ? TR("ACTIVE", "ATIVA") : TR("DISABLED", "DESATIVADA");
+                    ImU32 badge_c = (pt_on && pt_first) ? C_GREEN : pt_on ? C_TEAL : C_GOLD_HI;
+                    float bw = text_size(F_LABEL, 11, badge_t).x + 18;
+                    dl->AddRectFilled(P(x + 70 + tit_sz.x + 12, y + 13), P(x + 70 + tit_sz.x + 12 + bw, y + 33),
+                                      pt_on ? IM_COL32(34, 197, 94, 38) : IM_COL32(245, 158, 11, 38), 6 * g_s);
+                    text(dl, F_LABEL, 11, x + 70 + tit_sz.x + 21, y + 16, badge_c, badge_t);
+
+                    // Subtitle
+                    char sub[128];
+                    snprintf(sub, sizeof sub, TR("%d translated files · Highest priority over base game texts",
+                                                 "%d arquivos traduzidos · Prioridade máxima sobre textos do jogo base"),
+                             g_mods[pt_idx].files);
+                    text(dl, F_BODY, 13, x + 70, y + 38, C_MUTED, sub);
+
+                    // 1-Click Action Button on the right
+                    float btn_w = (!pt_on || !pt_first) ? 260 : 190, btn_h = 44;
+                    if (!pt_on || !pt_first) {
+                        if (button("##act_ptbr", TR("Activate PT-BR (1-Click)", "Ativar Tradução PT-BR (1-Clique)"),
+                                   x + w - btn_w - 14, y + 13, btn_w, btn_h, BTN_PRIMARY, true, IC_CHECK)) {
+                            g_mods[pt_idx].on = true;
+                            if (pt_idx > 0) {
+                                ModEntry target = g_mods[pt_idx];
+                                g_mods.erase(g_mods.begin() + pt_idx);
+                                g_mods.insert(g_mods.begin(), target);
+                            }
+                            mods_store();
+                        }
+                    } else {
+                        if (button("##dis_ptbr", TR("Disable Translation", "Desativar Tradução"),
+                                   x + w - btn_w - 14, y + 13, btn_w, btn_h, BTN_GHOST)) {
+                            g_mods[pt_idx].on = false;
+                            mods_store();
+                        }
+                    }
+                    y += card_h + 14;
+                } else {
+                    float card_h = 52;
+                    panel(dl, x, y, w, card_h, IM_COL32(18, 26, 36, 200), IM_COL32(63, 208, 201, 80));
+                    icon(dl, IC_GLOBE, x + 24, y + 26, 18, C_TEAL);
+                    text(dl, F_BODY, 13, x + 44, y + 17, C_SOFT,
+                         TR("PT-BR Translation: Place the 'Tradução PT-BR' folder into mods/ or drop its .zip here to activate in 1 click.",
+                            "Tradução PT-BR: Coloque a pasta 'Tradução PT-BR' em mods/ ou arraste o arquivo .zip aqui para ativar com 1 clique."));
+                    y += card_h + 12;
+                }
                 float list_h = H_ - 48 - 24 - 112 - 16 - y;
                 ImGui::SetCursorScreenPos(P(x, y));
                 ImGui::BeginChild("##modlist", S(w, list_h), 0, ImGuiWindowFlags_NavFlattened);
@@ -2922,14 +3045,21 @@ extern "C" void launcher_run(const char *root) {
                     float rw = w - 16, rh = 64;
                     ImVec2 save_o = g_o;
                     g_o = ImVec2(o.x - 0, o.y);  // (row-local coordinates for the helpers)
-                    cl->AddRectFilled(P(0, 0), P(rw, rh), m.on ? C_PANEL : IM_COL32(8, 19, 31, 170), 14 * g_s);
-                    cl->AddRect(P(0, 0), P(rw, rh), C_LINE, 14 * g_s, 0, 1.2f * g_s);
+                    bool is_pt = is_ptbr_mod_name(m.name);
+                    ImU32 row_bg = is_pt && m.on ? IM_COL32(12, 38, 46, 220) : m.on ? C_PANEL : IM_COL32(8, 19, 31, 170);
+                    ImU32 row_border = is_pt && m.on ? C_TEAL : C_LINE;
+                    cl->AddRectFilled(P(0, 0), P(rw, rh), row_bg, 14 * g_s);
+                    cl->AddRect(P(0, 0), P(rw, rh), row_border, 14 * g_s, 0, (is_pt && m.on ? 1.6f : 1.2f) * g_s);
                     cl->AddRectFilled(P(12, 10), P(56, 54), m.on ? IM_COL32(63, 208, 201, 36) : IM_COL32(255, 255, 255, 16), 10 * g_s);
-                    std::string ini = m.name.substr(0, 2);
+                    std::string ini = is_pt ? "BR" : m.name.substr(0, 2);
                     for (auto &c : ini) c = (char)toupper((unsigned char)c);
                     ImVec2 is = text_size(F_H2, 16, ini.c_str());
                     text(cl, F_H2, 16, 34 - is.x / 2, 32 - is.y / 2, m.on ? IM_COL32(127, 230, 224, 255) : C_MUTED, ini.c_str());
                     text(cl, F_LABEL, 17, 70, 10, m.on ? C_TEXT : C_SOFT, m.name.c_str());
+                    if (is_pt) {
+                        float nw = text_size(F_LABEL, 17, m.name.c_str()).x;
+                        text(cl, F_LABEL, 11, 70 + nw + 10, 14, C_GREEN, TR("[PT-BR TRANSLATION]", "[TRADUÇÃO PT-BR]"));
+                    }
                     char sub[96];
                     snprintf(sub, sizeof sub, TR("%d files · mods/%s%s", "%d arquivos · mods/%s%s"), m.files, m.name.c_str(),
                              m.on ? "" : TR(" · off", " · desligado"));

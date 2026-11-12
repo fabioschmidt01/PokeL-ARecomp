@@ -1,10 +1,12 @@
-### What's new
+### Highlights da Versão v0.26.3
 
-- **Windowed Launcher Mode**: PokeL-ARecomp now always opens the start screen / launcher in windowed mode first (never fullscreen). Fullscreen activates automatically upon starting game play if enabled in settings.
-- **"Extrair ROM (PokeL-Extractor)" Button**: Added a direct 1-click button on the setup screen to launch the standalone PokeL-Extractor utility.
-- **Native In-Engine Draw Distance & Live Memory Patching** (F1 > Advanced Video & Game > Draw distance): *Standard (1x)*, *High (2.5x - Default)* or *Ultra (4x)*.
-  - High: wild Pokémon and NPCs load at 100 m (Switch: 40 m / 60 m), trees visible up to 500 m (Switch: 200 m).
-  - Ultra: Pokémon and NPCs load at 150 m, trees visible up to 800 m.
-  - Real-time live memory patching: changing the setting in the F1 menu applies immediately in game without needing an area transition or restart. Settings save immediately.
-- **Hisui Color Enhancement & Tonemapper** (F1 > Advanced Video > Color enhancement): *Hisui Vibrant* (+20% saturation, gentle contrast curve) and *Hisui Cinematic* (stronger contrast and atmosphere). Zero CPU overhead in Vulkan present shader.
-- **Automatic Save Backup Rotation**: Creates timestamped backups in `save/backups/main_YYYYMMDD_HHMMSS.bak` whenever the game commits save data, retaining the 10 most recent copies.
+- **🎮 Ícones Automáticos de Controle (PlayStation, Xbox, Switch Pro e Teclado)**:
+  - Detecção dinâmica de controle refinada com suporte nativo a PlayStation (DualSense, DualShock 4 e PS3 via `SDL_GAMEPAD_TYPE` e mapeamento de botões South Cross), Xbox (Series, One, 360) e Nintendo Switch Pro / Joy-Cons.
+  - Opção *Ícones dos botões* em **F1 > Controles** atualizada com indicador de família em tempo real (`Auto [PlayStation]`, `Auto [Xbox]`, etc.) e persistência imediata em `larecomp.ini`.
+  - Chip informativo exibido na tela inicial (JOGAR) mostrando o controle conectado e sua respectiva família de ícones.
+
+- **🇧🇷 Gerenciador Visual de Mods & Ativação 1-Clique da Tradução PT-BR**:
+  - Card de destaque para a Tradução PT-BR na aba **Mods** do Launcher: detecta a pasta ou arquivo da tradução e ativa com 1 clique, posicionando-a automaticamente no topo da lista (prioridade máxima da camada RomFS sobre textos e interfaces).
+  - Botões de ação em massa na aba Mods: **Ativar todos** e **Desativar todos** os mods com 1 clique.
+  - Destaque visual na lista de mods com badge `[TRADUÇÃO PT-BR]` e contorno temático verde/ciano.
+  - Nova seção informativa em **F1 > Jogo > Mods e Traduções** exibindo em tempo real se a tradução brasileira está ativa no LayeredFS.
