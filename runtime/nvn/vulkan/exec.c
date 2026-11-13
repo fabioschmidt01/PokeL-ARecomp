@@ -1146,10 +1146,10 @@ void renderer_slow_counters(uint64_t *submits, uint64_t *gpu_wait_ns, uint64_t *
 // (shader code addresses and content hashes, as in "[shader] slow build" / shader_variants.txt, and how long they
 // have been skipped without a break). "building" for tens of seconds is a build that never finishes.
 enum { SK_NO_PROGRAM, SK_NO_STAGES, SK_PROG_BUILDING, SK_PROG_FAILED, SK_PIPE_BUILDING, SK_PIPE_FAILED, SK_CS_BUILDING,
-       SK_CS_FAILED, SK_TOPOLOGY, SK_DEBUG_SKIP, SK_HIDDEN, SK_N };
+       SK_CS_FAILED, SK_TOPOLOGY, SK_DEBUG_SKIP, SK_HIDDEN, SK_EMPTY, SK_N };
 static const char *const skip_names[SK_N] = {
     "no program", "program missing a stage", "program building", "program failed", "pipeline building", "pipeline failed",
-    "compute building", "compute failed", "topology", "debug skip list", "hidden on purpose"};
+    "compute building", "compute failed", "topology", "debug skip list", "hidden on purpose", "empty or impossible draw"};
 static int log_skips = -1;  // (-1: not read yet: the first skip reads it)
 static uint64_t skip_n[SK_N];
 #define SKIP_TOP 32
@@ -6722,6 +6722,26 @@ static void vp_box_16_9(void) {
 static void draw_(CmdRec *r, bool indexed) {
     if (prof) prof_tp_ = SDL_GetTicksNS();
     if (!st.program) { SKIP(SK_NO_PROGRAM); return; }
+    {   // A draw of no vertices or no instances draws nothing on the hardware (DrawArrays / DrawElements record 1
+        // instance; the instanced calls pass theirs): skipped before its pipeline wait and data uploads. They used to
+        // be drawn once - Pokémon Legends: Arceus issues 0-instance draws whose other arguments are leftovers, and one
+        // (8 targets 64x64) came with a vertex count made of garbage: 8 GB asked for its vertices (#7), a crash on an
+        // address built from it, the scene going black first (#12). A count past any real mesh (2^26) is not drawn
+        // either, logged. LARECOMP_DRAW_GUARD=0: as before.
+        static int guard = -1;
+        if (guard < 0) guard = !ENV("LARECOMP_DRAW_GUARD") || atoi(ENV("LARECOMP_DRAW_GUARD")) != 0;
+        uint64_t cnt = r->x[2], inst = r->x[indexed ? 6 : 4];
+        if (guard && (!cnt || !inst || cnt > (1u << 26) || inst > (1u << 24))) {
+            static int nlog;
+            if ((cnt > (1u << 26) || inst > (1u << 24)) && nlog++ < 20)
+                LOG("[draw] frame %llu: skipped an impossible draw: %llu %s x %llu instances (vs %llx fs %llx)\n",
+                    (unsigned long long)renderer_present_count(), (unsigned long long)cnt, indexed ? "indices" : "vertices",
+                    (unsigned long long)inst, (unsigned long long)st.program->stages[0].code_addr,
+                    (unsigned long long)st.program->stages[1].code_addr);
+            SKIP(SK_EMPTY);
+            return;
+        }
+    }
     ShaderKey vkey = {0}, fkey = {0};
     vkey.glsl = fkey.glsl = 1;
     vkey.flip_y = fkey.flip_y = nvn_window_origin() == 0;

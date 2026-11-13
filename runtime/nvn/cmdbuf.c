@@ -393,8 +393,15 @@ NVN(nvnCommandBufferDiscardColor) {
 NVN(nvnCommandBufferDiscardDepthStencil) { (void)c; static int seen_; if (!seen_++ && ENV("LARECOMP_LOG_NOOP")) LOG("[nvn] no-op called: nvnCommandBufferDiscardDepthStencil\n"); }
 
 // ---- draws (all integer arguments fit in x1..x7)
-NVN(nvnCommandBufferDrawArrays) { Snap s = snap(c); CmdRec *r = record(c, CMD_DRAW_ARRAYS, 0, &s); r->x[3] = 0; r->x[4] = 1; }
-NVN(nvnCommandBufferDrawArraysInstanced) { Snap s = snap(c); record(c, CMD_DRAW_ARRAYS, 0, &s); }
+// Their counts, firsts, bases and the mode are 32-bit ints in NVN's API: the AAPCS64 leaves a w register's upper half
+// undefined, and Pokémon Legends: Arceus passes some with garbage there - a 0-instance draw (one that draws nothing)
+// came with a "vertex count" of 0x5000000000 / 0x7080001a70: the runtime reserved 8 GB for its vertices (#7) or read
+// an address made of it (#12, a crash after the scene went black / flickered). Only the index buffer is an address.
+static void draw_args32(CmdRec *r, unsigned keep64) {
+    for (int i = 0; i < 7; i++) if (!(keep64 >> i & 1)) r->x[i] = (uint32_t)r->x[i];
+}
+NVN(nvnCommandBufferDrawArrays) { Snap s = snap(c); CmdRec *r = record(c, CMD_DRAW_ARRAYS, 0, &s); draw_args32(r, 0); r->x[3] = 0; r->x[4] = 1; }
+NVN(nvnCommandBufferDrawArraysInstanced) { Snap s = snap(c); draw_args32(record(c, CMD_DRAW_ARRAYS, 0, &s), 0); }
 // Debug: LARECOMP_TRACE_COUNT=<n> logs the guest call chain of indexed draws with n indices.
 static void trace_draw(Cpu *c, uint64_t count) {
     static long want = -2;
@@ -417,15 +424,21 @@ NVN(nvnCommandBufferDrawElements) {
     trace_draw(c, c->x[3]);
     Snap s = snap(c);
     CmdRec *r = record(c, CMD_DRAW_ELEMENTS, 0, &s);
+    draw_args32(r, 1u << 3);  // (x[3]: the index buffer's address)
     r->x[4] = 0; r->x[5] = 0; r->x[6] = 1;  // base vertex, base instance, instances
 }
 NVN(nvnCommandBufferDrawElementsBaseVertex) {
     trace_draw(c, c->x[3]);
     Snap s = snap(c);
     CmdRec *r = record(c, CMD_DRAW_ELEMENTS, 0, &s);
+    draw_args32(r, 1u << 3);
     r->x[5] = 0; r->x[6] = 1;
 }
-NVN(nvnCommandBufferDrawElementsInstanced) { trace_draw(c, c->x[3]); Snap s = snap(c); record(c, CMD_DRAW_ELEMENTS, 0, &s); }
+NVN(nvnCommandBufferDrawElementsInstanced) {
+    trace_draw(c, c->x[3]);
+    Snap s = snap(c);
+    draw_args32(record(c, CMD_DRAW_ELEMENTS, 0, &s), 1u << 3);
+}
 PLAIN(nvnCommandBufferDrawArraysIndirect, CMD_DRAW_ARRAYS_INDIRECT)
 PLAIN(nvnCommandBufferDrawElementsIndirect, CMD_DRAW_ELEMENTS_INDIRECT)
 PLAIN(nvnCommandBufferMultiDrawArraysIndirectCount, CMD_MULTI_DRAW_ARRAYS_INDIRECT_COUNT)
