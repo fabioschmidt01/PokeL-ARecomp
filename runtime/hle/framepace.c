@@ -122,7 +122,7 @@ bool rt_pla_is_60fps(void) {
 // By supplying the real wall-clock frame duration in nanoseconds (clamped to [16.67 ms, 50.0 ms] when 60 FPS is on),
 // PLA runs at 1.0x normal speed at 60 FPS (no 2x speed-up) AND stays at 1.0x speed if FPS dips below 60 (no slow-motion),
 // matching TotK Recomp's dynamic delta-time behavior.
-uint64_t rt_pla_frame_dt_ns(uint32_t slot, uint64_t default_ns) {
+static uint64_t pla_frame_dt_ns(uint32_t slot, uint64_t default_ns) {
     bool fps60 = rt_pla_is_60fps();
     uint64_t target_ns = fps60 ? 0x00fe502bull : (default_ns ? default_ns : 0x01fca056ull);
     static uint64_t last_ns, cur_dt_ns;
@@ -155,5 +155,57 @@ uint64_t rt_pla_frame_dt_ns(uint32_t slot, uint64_t default_ns) {
         }
     }
     return cur_dt_ns;
+}
+
+// Game time handed out (slot 0: once per game frame), for pace_report's speed check
+static _Atomic uint64_t g_game_time_ns, g_game_frames;
+_Atomic uint64_t g_fg_presents;  // (runtime/nvn/vulkan/device.c: frame generation's in-between frames shown)
+uint64_t rt_pla_frame_dt_ns(uint32_t slot, uint64_t default_ns) {
+    uint64_t dt = pla_frame_dt_ns(slot, default_ns);
+    if (slot == 0) g_game_time_ns += dt, g_game_frames++;
+    return dt;
+}
+
+// The log's pacing report (game thread, every present: runtime/nvn/objects.c present_pace), so a speed problem shows
+// in a player's log by itself - "the game runs fast" was only found by asking (2026-11-13: 30 fps with VSync off
+// (Unlimited) ran 1.5x in the field and 8x in menus, the log only had fps lines):
+// - [speed] every LARECOMP_SPEED_LOG seconds (default 10, 0: off): game time against real time (1.00x: the
+//   Switch's speed; flagged past 1.15x / under 0.85x), the game's and the screen's frame rates, the clock mode,
+//   the present interval, VSync and whether the presents are paced, frame generation;
+// - [settings] changed: the frame rate, frame generation, VSync, aspect ratio, FOV and resolution, when F1 changes them.
+void pace_report(int interval, bool paced) {
+    static int every = -1;
+    if (every < 0) every = ENV("LARECOMP_SPEED_LOG") ? atoi(ENV("LARECOMP_SPEED_LOG")) : 10;
+    static struct { int fps60, lock, fg, vsync, aspect, fov, res; } last = {-1, -1, -1, -1, -1, -1, -1};
+    if (last.fps60 != g_settings.fps60 || last.lock != g_settings.fps60_lock || last.fg != g_settings.framegen ||
+        last.vsync != g_settings.vsync || last.aspect != g_settings.aspect || last.fov != g_settings.fov ||
+        last.res != g_settings.res_mode) {
+        static const char *const vs[] = {"off (mailbox)", "on (60 Hz)", "off (unlimited)"};
+        if (last.fps60 >= 0)
+            LOG("[settings] changed: frame rate %s%s, frame generation %s, vsync %s, aspect %s, fov %d, resolution %s\n",
+                g_settings.fps60 ? "60 (experimental)" : "30", g_settings.fps60 && !g_settings.fps60_lock ? " (drop to 30)" : "",
+                g_settings.framegen ? "on" : "off", vs[g_settings.vsync >= 0 && g_settings.vsync < 3 ? g_settings.vsync : 0],
+                g_settings.aspect == ASPECT_ORIGINAL ? "16:9" : "unlocked", g_settings.fov, settings_res_name(g_settings.res_mode));
+        last.fps60 = g_settings.fps60, last.lock = g_settings.fps60_lock, last.fg = g_settings.framegen;
+        last.vsync = g_settings.vsync, last.aspect = g_settings.aspect, last.fov = g_settings.fov, last.res = g_settings.res_mode;
+    }
+    if (!every) return;
+    extern uint64_t renderer_present_count(void);
+    static uint64_t t0, gt0, gf0, pc0, fg0;
+    uint64_t now = plat_now_ns(), gt = g_game_time_ns, gf = g_game_frames, pc = renderer_present_count(), fg = g_fg_presents;
+    if (!t0 || now < t0) { t0 = now, gt0 = gt, gf0 = gf, pc0 = pc, fg0 = fg; return; }
+    if (now - t0 < (uint64_t)every * 1000000000ull) return;
+    double wall = (double)(now - t0) / 1e9, game = (double)(gt - gt0) / 1e9, ratio = game / wall;
+    uint64_t frames = gf - gf0;
+    double drawn = (double)(pc - pc0) / wall, shown = (double)(pc - pc0 + fg - fg0) / wall;
+    static const char *const vs[] = {"off (mailbox)", "on (60 Hz)", "off (unlimited)"};
+    LOG("[speed] %.0f s: game time %.2fx real time%s (%llu game frames, %.1f ms each), %.1f fps drawn, %.1f fps on screen%s, "
+        "clock %s, present interval %d %s, vsync %s\n", wall, ratio,
+        !frames ? " (clock not running: loading / start screen)" : ratio > 1.15 ? " <- FASTER than real time" :
+        ratio < 0.85 ? " <- slow motion" : "",
+        (unsigned long long)frames, frames ? (double)(gt - gt0) / 1e6 / (double)frames : 0.0, drawn, shown,
+        g_settings.framegen ? " (frame generation on)" : "", rt_pla_is_60fps() ? "60 fps (dynamic dt)" : "30 fps (fixed dt)",
+        interval, paced ? "(paced)" : "(not paced)", vs[g_settings.vsync >= 0 && g_settings.vsync < 3 ? g_settings.vsync : 0]);
+    t0 = now, gt0 = gt, gf0 = gf, pc0 = pc, fg0 = fg;
 }
 

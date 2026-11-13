@@ -1929,7 +1929,9 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         fg_active = g_settings.framegen && !menu_is_open() && g_prev_frame_b && g_prev_frame_b->image && g_prev_frame_b != b;
 
         if (fg_active) {
-            // Frame Generation (90-120 FPS): interpolate intermediate frame with HUD Decoupling
+            // Frame Generation (2x: 30 -> 60, 60 -> 120): the in-between frame, with HUD Decoupling
+            extern _Atomic uint64_t g_fg_presents;  // (runtime/hle/framepace.c pace_report: the screen's frame rate)
+            g_fg_presents++;
             vk_framegen_draw(cb, g_prev_frame_b, b, (float)vx, (float)vy, (float)vw, (float)vh, pv, 0.5f);
             vk_hdr_mark_base();
             menu_render_repeat((void *)cb);
