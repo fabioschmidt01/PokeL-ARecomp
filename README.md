@@ -63,6 +63,7 @@ The game's ARM64 machine code is translated ahead-of-time (AOT) into C and compi
 - **Custom Shading & Lighting**: Screen-space ambient occlusion (XeGTAO), water reflections (SSR), screen-space indirect lighting (SSGI), and high-resolution shadow mapping (up to 4x).
 - **HDR Display Output**: scRGB / HDR10 support with peak brightness tuning.
 - **HD Texture Pack Loader**: Direct loading from `textures/hd/`.
+- **Ultrawide 21:9 / 32:9 (Hor+) — 🧪 Experimental**: with **F1 > Video > Aspect ratio > Unlocked (ultrawide)** the image fills any window shape: wider screens show more of the world at the sides, with no stretching. The window's shape is detected automatically. *Not fully tested on real ultrawide monitors yet — bugs may occur* (objects popping in at the screen edges, effects or UI out of place). Please report them in [issue #1](https://github.com/fabioschmidt01/PokeL-ARecomp/issues/1). *Original 16:9* keeps the game's framing with side bars.
 
 ### Saves & Safety
 - **Automatic Save Backup Rotation**: Creates timestamped backups in `save/backups/main_YYYYMMDD_HHMMSS.bak` whenever the game commits save data, retaining the 10 most recent copies.
@@ -72,6 +73,7 @@ The game's ARM64 machine code is translated ahead-of-time (AOT) into C and compi
 
 ### Controls & Input
 - Any modern gamepad via SDL3: Xbox, DualShock 4, DualSense, Nintendo Switch Pro Controller, Steam Deck.
+- **Button icons that follow your bindings**: Xbox and PlayStation icons show the button you actually press, whether your controller is mapped by position (Switch layout) or by letter (`bind_pad_a = south`: Xbox A / cross confirms). Changes apply from the next start.
 - Full Keyboard & Mouse support with smooth mouse-directed camera and customizable keybindings.
 - Dynamic controller button glyphs matching your active controller layout.
 

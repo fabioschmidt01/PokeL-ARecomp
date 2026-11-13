@@ -3939,69 +3939,113 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
     if ((si->cbuf_dynamic & (1u << k)) && r.size) size = r.size > 0x10000 ? 0x10000 : r.size;
     if (size > r.size && r.size) size = r.size;
     if (size < 16) size = 16;
-    if (stage == 0 && r.addr && size >= 64) {
+    // The camera (F1 > Video > Field of view, and Hor+ in windows wider than 16:9): the scene camera's projection rows
+    // are scaled - x by fov / wide, y by fov - so a 32:9 window shows more at the sides instead of a 16:9 view
+    // stretched 2x (issue #1). Taller windows keep the horizontal view (y scaled by the factor instead).
+    // Pokémon Legends: Arceus: the scene camera is slot 5 (CB8 in the translated shaders), rows: view 0-3, projection
+    // 4-7, view-projection 8-11 (449 of the 460 vertex shaders reading CB8 build gl_Position from rows 8-11; found
+    // 2026-11-12 decompiling cache/spirv). Fragment shaders project with it too (screen-space effects): both stages
+    // get the scaled copy. Only in passes whose target was widened (pass_sx / pass_sy = the widescreen factor): shadow
+    // maps and 16:9 offscreen passes keep the game's camera.
+    // (v0.26.5 guessed the camera from any vertex UBO with a perspective-looking row: it took slot 7, the per-object
+    // world matrices (CB10), and squashed objects along world x while the real camera stayed 16:9)
+    // LARECOMP_CAM_SLOT=<n>: another slot (-1: off), LARECOMP_CAM_GENERIC=1: that old guess as well,
+    // LARECOMP_LOG_CAM=1: the camera rows as found (once per stage and size), =2: also every UBO slot seen in a widened
+    // pass (first 16 floats, 96 lines), to find other cameras (particles, effects).
+    if ((stage == 0 || (stage == 1 && !g_game_is_la)) && r.addr && size >= 64) {
         extern float widescreen_factor(void);
         float wide = widescreen_factor();
-        if (wide <= 0.0f) wide = 1.0f;
+        if (!(wide > 0.0f) || g_game_is_la) wide = 1.0f;  // (Link's Awakening: its camera code is patched instead)
+        bool widened = pass_sy > 0 && fabsf(pass_sx / pass_sy - wide) < 0.02f * wide;
+        if (!widened) wide = 1.0f;
         float fov_scale = 1.0f;
         if (g_settings.fov >= FOV_MIN && g_settings.fov <= FOV_MAX && g_settings.fov != FOV_DEFAULT) {
             fov_scale = tanf(30.0f * (float)M_PI / 180.0f) / tanf(((float)g_settings.fov * 0.5f) * (float)M_PI / 180.0f);
         }
-        if (fov_scale != 1.0f || wide > 1.001f) {
-            float sx = fov_scale / wide;
-            float sy = fov_scale;
-            const float *u = (const float *)(uintptr_t)r.addr;
-            bool is_cam_ubo = false;
-            int proj_offset = -1;
-            int vp_offset = -1;
-
-            if (size >= 320 && fabsf(u[30] + 1.0f) < 1e-3f && fabsf(u[31]) < 1e-5f) {
-                is_cam_ubo = true;
-                proj_offset = 16;
-                vp_offset = 32;
-            } else if (size >= 64 && (u[12] != 0.0f || u[13] != 0.0f || u[14] != 0.0f)) {
-                float dir_len_sq = u[12]*u[12] + u[13]*u[13] + u[14]*u[14];
-                if (dir_len_sq > 0.1f && dir_len_sq < 10.0f && fabsf(u[15]) < 1e5f) {
-                    is_cam_ubo = true;
-                    vp_offset = 0;
-                }
+        static int log_cam = -1, cam_slot = -2, cam_generic = -1;
+        if (log_cam < 0) log_cam = getenv("LARECOMP_LOG_CAM") ? atoi(getenv("LARECOMP_LOG_CAM")) : 0;
+        if (cam_slot == -2) cam_slot = getenv("LARECOMP_CAM_SLOT") ? atoi(getenv("LARECOMP_CAM_SLOT")) : 5;
+        if (cam_generic < 0) cam_generic = getenv("LARECOMP_CAM_GENERIC") ? atoi(getenv("LARECOMP_CAM_GENERIC")) != 0 : 0;
+        const float *u = (const float *)(uintptr_t)r.addr;
+        if (log_cam >= 2 && wide > 1.001f) {
+            static int nlog;
+            static struct { int stage, idx; uint64_t size; } seen[96];
+            bool dup = false;
+            for (int i = 0; i < nlog && i < 96; i++)
+                if (seen[i].stage == stage && seen[i].idx == idx && seen[i].size == size) dup = true;
+            if (!dup && nlog < 96) {
+                seen[nlog].stage = stage, seen[nlog].idx = idx, seen[nlog].size = size, nlog++;
+                LOG("[cam] slot %d (CB%d) %s size %llu: %.3f %.3f %.3f %.3f | %.3f %.3f %.3f %.3f | %.3f %.3f %.3f %.3f | "
+                    "%.3f %.3f %.3f %.3f\n", idx, k, stage ? "fragment" : "vertex", (unsigned long long)size, u[0], u[1],
+                    u[2], u[3], u[4], u[5], u[6], u[7], u[8], u[9], u[10], u[11], u[12], u[13], u[14], u[15]);
             }
-
-            if (is_cam_ubo) {
-                static struct { uint64_t addr, seq; int fov; float wide; VkSpan span; } fov_cache[18];
+        }
+        if (fov_scale != 1.0f || wide > 1.001f || wide < 0.999f) {
+            float sx = fov_scale, sy = fov_scale;
+            if (wide >= 1.0f) sx /= wide;
+            else sy *= wide;
+            int proj_offset = -1, vp_offset = -1;
+            const char *how = NULL;
+            if (!g_game_is_la) {
+                // Arceus: the configured slot when it holds the camera - an affine view (row 3: 0 0 0 1), a perspective
+                // projection (row 7: 0 0 +-1 0) and the view-projection's w row (11) the camera's forward axis (length
+                // ~1). (The fragment stage's slot 5 is often another buffer - all 1.0 in the title and the field: its
+                // row 11 alone passed for a camera, and an effect's parameters were scaled; test of 2026-11-12)
+                if (idx == cam_slot && size >= 48 * sizeof(float)) {
+                    bool view = fabsf(u[12]) < 1e-4f && fabsf(u[13]) < 1e-4f && fabsf(u[14]) < 1e-4f && fabsf(u[15] - 1.0f) < 1e-4f;
+                    bool persp = fabsf(fabsf(u[30]) - 1.0f) < 1e-3f && fabsf(u[31]) < 1e-5f && fabsf(u[28]) < 1e-5f && fabsf(u[29]) < 1e-5f;
+                    float fw = u[44] * u[44] + u[45] * u[45] + u[46] * u[46];
+                    if (view && persp && fw > 0.25f && fw < 4.0f) proj_offset = 16, vp_offset = 32, how = "scene camera";
+                }
+            } else if (stage == 0 && size >= 320 && fabsf(u[30] + 1.0f) < 1e-3f && fabsf(u[31]) < 1e-5f) {
+                proj_offset = 16, vp_offset = 32, how = "scene camera";
+            }
+            if (!how && stage == 0 && (g_game_is_la || cam_generic) && (u[12] != 0.0f || u[13] != 0.0f || u[14] != 0.0f)) {
+                float dir_len_sq = u[12]*u[12] + u[13]*u[13] + u[14]*u[14];
+                if (dir_len_sq > 0.1f && dir_len_sq < 10.0f && fabsf(u[15]) < 1e5f) vp_offset = 0, how = "generic guess";
+            }
+            if (how) {
+                static struct { uint64_t addr, seq; float sx, sy; VkSpan span; } cam_cache[2][18];
                 uint64_t seq = vk_pending_seq();
-                int cidx = (idx >= 0 && idx < 18) ? idx : 0;
-                if (fov_cache[cidx].addr == r.addr && fov_cache[cidx].seq == seq &&
-                    fov_cache[cidx].fov == g_settings.fov && fabsf(fov_cache[cidx].wide - wide) < 1e-4f) {
-                    return ubo_span(fov_cache[cidx].span, size);
+                int cs = stage ? 1 : 0, cidx = (idx >= 0 && idx < 18) ? idx : 0;
+                if (cam_cache[cs][cidx].addr == r.addr && cam_cache[cs][cidx].seq == seq &&
+                    cam_cache[cs][cidx].sx == sx && cam_cache[cs][cidx].sy == sy) {
+                    return ubo_span(cam_cache[cs][cidx].span, size);
                 }
                 float stack_cbuf[1024];
                 void *buf = size <= sizeof(stack_cbuf) ? (void *)stack_cbuf : malloc(size);
                 if (buf) {
                     memcpy(buf, (const void *)(uintptr_t)r.addr, size);
                     float *f = (float *)buf;
+                    // the x and y rows (row-major: the clip x and y each come from one row)
                     if (proj_offset >= 0 && (uint64_t)(proj_offset + 16) * sizeof(float) <= size) {
-                        f[proj_offset + 0] *= sx;
-                        f[proj_offset + 5] *= sy;
+                        for (int i = 0; i < 4; i++) f[proj_offset + i] *= sx, f[proj_offset + 4 + i] *= sy;
                     }
                     if (vp_offset >= 0 && (uint64_t)(vp_offset + 16) * sizeof(float) <= size) {
-                        for (int i = 0; i < 4; i++) f[vp_offset + i] *= sx;
-                        for (int i = 4; i < 8; i++) f[vp_offset + i] *= sy;
+                        for (int i = 0; i < 4; i++) f[vp_offset + i] *= sx, f[vp_offset + 4 + i] *= sy;
                     }
                     VkSpan s = vk_transient_copy(buf, size, 256);
                     if (buf != stack_cbuf) free(buf);
-                    fov_cache[cidx].addr = r.addr;
-                    fov_cache[cidx].seq = seq;
-                    fov_cache[cidx].fov = g_settings.fov;
-                    fov_cache[cidx].wide = wide;
-                    fov_cache[cidx].span = s;
-                    static int s_logged_fov = -1;
-                    static float s_logged_wide = -1.0f;
-                    if (s_logged_fov != g_settings.fov || fabsf(s_logged_wide - wide) > 1e-3f) {
-                        LOG("[fov] camera matrix scaling active (idx=%d, size=%llu): fov=%d wide=%.2f -> sx=%.3f sy=%.3f\n",
-                            idx, (unsigned long long)size, g_settings.fov, wide, sx, sy);
-                        s_logged_fov = g_settings.fov;
-                        s_logged_wide = wide;
+                    cam_cache[cs][cidx].addr = r.addr;
+                    cam_cache[cs][cidx].seq = seq;
+                    cam_cache[cs][cidx].sx = sx;
+                    cam_cache[cs][cidx].sy = sy;
+                    cam_cache[cs][cidx].span = s;
+                    static float s_logged_sx[2][18], s_logged_sy[2][18];
+                    if (s_logged_sx[cs][cidx] != sx || s_logged_sy[cs][cidx] != sy) {
+                        LOG("[fov] camera scaled: slot %d (CB%d) %s, size %llu, %s%s: fov %d wide %.2f -> sx %.3f sy %.3f\n",
+                            idx, k, stage ? "fragment" : "vertex", (unsigned long long)size, how,
+                            proj_offset >= 0 ? " (+ projection)" : "", g_settings.fov, wide, sx, sy);
+                        s_logged_sx[cs][cidx] = sx, s_logged_sy[cs][cidx] = sy;
+                    }
+                    if (log_cam >= 1) {
+                        static uint64_t logged_size[2];
+                        if (logged_size[cs] != size) {
+                            logged_size[cs] = size;
+                            for (int row = 0; row < 12; row++)
+                                LOG("[cam] %s slot %d row %2d: %10.4f %10.4f %10.4f %10.4f\n", stage ? "fragment" : "vertex",
+                                    idx, row, u[row * 4], u[row * 4 + 1], u[row * 4 + 2], u[row * 4 + 3]);
+                        }
                     }
                     return ubo_span(s, size);
                 }

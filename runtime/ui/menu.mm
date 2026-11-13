@@ -441,12 +441,14 @@ static void tab_display(bool in_game) {
     bool la = g_game_is_la && menu_la_tabs;  // (Link's Awakening's own rows)
     opt_begin("##video", scale);
     opt_section(TR("Display", "Tela"));
-    const char *aspects[] = {TR("Unlocked", "Livre"), TR("Original 16:9", "16:9 original")};
+    const char *aspects[] = {TR("Unlocked (ultrawide)", "Livre (ultrawide)"), TR("Original 16:9", "16:9 original")};
     opt_choice(TR("Aspect ratio", "Proporção"), &g_settings.aspect, aspects, 2, ASPECT_UNLOCKED,
                TR("Unlocked: the view fills the window, so wider (or taller) windows show more of the world - up to "
-                  "ultrawide. Original 16:9: the game's own framing, with bars.",
+                  "ultrawide 21:9 / 32:9, detected from the window by itself. Experimental in Pokémon Legends: Arceus: "
+                  "report what looks wrong (issue #1). Original 16:9: the game's own framing, with bars.",
                   "Livre: a imagem ocupa a janela toda, então janelas mais largas (ou mais altas) mostram mais do mundo "
-                  "- até ultrawide. 16:9 original: o enquadramento do próprio jogo, com barras."));
+                  "- até ultrawide 21:9 / 32:9, detectado pela própria janela. Experimental no Pokémon Legends: Arceus: "
+                  "avise o que parecer errado (issue #1). 16:9 original: o enquadramento do próprio jogo, com barras."));
     bool fs = g_settings.fullscreen;
     if (opt_toggle(TR("Fullscreen", "Tela cheia"), &fs, false,
                    TR("Fills the screen. Also: F11, Alt+Enter or Cmd+Ctrl+F.", "Ocupa a tela toda. Também: F11, Alt+Enter ou Cmd+Ctrl+F."))) {

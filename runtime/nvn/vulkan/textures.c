@@ -2,6 +2,7 @@
 // (counterpart of the texture half of metal.m and the view helpers of renderer.m).
 #include <SDL3/SDL_cpuinfo.h>
 #include <SDL3/SDL_filesystem.h>
+#include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_surface.h>
 #include <SDL3/SDL_timer.h>
 #include <dirent.h>
@@ -12,6 +13,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "../rqueue.h"
 #include "vk.h"
@@ -633,29 +635,60 @@ void vk_textures_reset(void) {
 // The same way, whatever the HD setting: the game's own button icons relabelled for the prompts' style
 // (textures/prompts/<style>, runtime/hle/pl.c pl_prompt_set; made by tools/za/prompt_textures.py), ahead of the pack.
 static int hd_on = -1, hd_dump = -1;
-typedef struct { uint64_t *h; int n; char dir[48]; } HdSet;  // sorted hashes of <dir>/*.png, *.dds
+// sorted hashes of <dir>/*.png, *.dds over a set's folders (h first: hd_cmp compares a key's or an entry's first 8 bytes)
+typedef struct { uint64_t h; int dir; } HdHash;
+typedef struct { HdHash *h; int n, cap, ndir; char dir[6][64]; } HdSet;
 static HdSet hd_sets[2];  // [0] button prompts, [1] HD pack
 static int hd_cmp(const void *a, const void *b) { uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b; return x < y ? -1 : x > y; }
+static int hd_cmp_entry(const void *a, const void *b) {  // (a hash in two folders: the one scanned first)
+    int c = hd_cmp(a, b);
+    return c ? c : ((const HdHash *)a)->dir - ((const HdHash *)b)->dir;
+}
 
 static void hd_scan(HdSet *s, const char *dir) {
-    snprintf(s->dir, sizeof s->dir, "%s", dir);
+    if (s->ndir == (int)(sizeof s->dir / sizeof s->dir[0])) return;
+    int di = s->ndir++;
+    snprintf(s->dir[di], sizeof s->dir[di], "%s", dir);
     DIR *d = opendir(dir);
     if (!d) return;
-    int cap = 0;
+    int n0 = s->n;
     for (struct dirent *de; (de = readdir(d));) {
         unsigned long long h;
         char ext[8] = "";
         if (strlen(de->d_name) != 20 || sscanf(de->d_name, "%16llx.%4s", &h, ext) != 2 || (strcmp(ext, "png") && strcmp(ext, "dds")))
             continue;
-        if (s->n == cap) { cap = cap ? cap * 2 : 1024; s->h = realloc(s->h, cap * sizeof *s->h); }
-        s->h[s->n++] = h;
+        if (s->n == s->cap) { s->cap = s->cap ? s->cap * 2 : 1024; s->h = realloc(s->h, s->cap * sizeof *s->h); }
+        s->h[s->n++] = (HdHash){h, di};
     }
     closedir(d);
-    qsort(s->h, s->n, sizeof *s->h, hd_cmp);
-    int k = 0;  // (a texture there as both .png and .dds: once)
-    for (int i = 0; i < s->n; i++) if (!k || s->h[i] != s->h[k - 1]) s->h[k++] = s->h[i];
+    qsort(s->h, s->n, sizeof *s->h, hd_cmp_entry);
+    int k = 0;  // (a texture there as both .png and .dds, or in two folders: once)
+    for (int i = 0; i < s->n; i++) if (!k || s->h[i].h != s->h[k - 1].h) s->h[k++] = s->h[i];
     s->n = k;
-    LOG("[tex] %d textures in %s\n", s->n, dir);
+    LOG("[tex] %d textures in %s\n", s->n - n0, dir);
+}
+
+// Pokémon Legends: Arceus button icons by binding (tools/pla/prompt_glyphs.py): textures/prompts/<set>/<slot>-<pad>/
+// redraws the icons of Switch button <slot> with the symbol of the controller button bound to it now - the overlays
+// (textures/prompts/<set>/romfs, runtime/services/fs.c) are icon mods made for one layout each (Xbox by position:
+// A shown as B; PlayStation: A as cross), so with bind_pad_a = south an Xbox player was told to press B while A
+// was the button (2026-11-12). Bindings changed in the Controls tab apply from the next start, as the overlay does.
+static void hd_scan_bound_icons(HdSet *s, const char *set) {
+    extern int16_t g_bind_pad[];
+    char base[48], dir[64];
+    snprintf(base, sizeof base, "textures/prompts/%s", set);
+    struct stat st;
+    if (!strcmp(set, "steamdeck") && stat("textures/prompts/steamdeck/romfs", &st))  // (fs.c: the Xbox overlay then)
+        snprintf(base, sizeof base, "textures/prompts/xbox");
+    static const char *const slot[4] = {"A", "B", "X", "Y"};  // (BIND_A..BIND_Y: runtime/input_bind.h)
+    for (int i = 0; i < 4; i++) {
+        int b = g_bind_pad[i];
+        const char *pad = b == SDL_GAMEPAD_BUTTON_SOUTH ? "south" : b == SDL_GAMEPAD_BUTTON_EAST ? "east"
+                        : b == SDL_GAMEPAD_BUTTON_WEST ? "west" : b == SDL_GAMEPAD_BUTTON_NORTH ? "north" : NULL;
+        if (!pad) continue;  // (bound to a shoulder, a stick click...: the overlay's icon as it is)
+        snprintf(dir, sizeof dir, "%s/%s-%s", base, slot[i], pad);
+        if (!stat(dir, &st)) hd_scan(s, dir);
+    }
 }
 
 static void hd_init(void) {
@@ -669,13 +702,20 @@ static void hd_init(void) {
     const char *set = pl_prompt_set();
     char dir[48];
     snprintf(dir, sizeof dir, "textures/prompts/%s", set ? set : "");
-    if (set) hd_scan(&hd_sets[0], dir);
+    if (set) {
+        hd_scan(&hd_sets[0], dir);
+        extern int g_game_is_la;  // (runtime/rt.h)
+        if (!g_game_is_la) hd_scan_bound_icons(&hd_sets[0], set);
+    }
     if (hd_on) hd_scan(&hd_sets[1], "textures/hd");
 }
 
-static const HdSet *hd_find(uint64_t h) {
-    for (int i = 0; i < (hd_on > 0 ? 2 : 1); i++)
-        if (hd_sets[i].n && bsearch(&h, hd_sets[i].h, hd_sets[i].n, sizeof h, hd_cmp)) return &hd_sets[i];
+// the folder holding texture h's image, or NULL
+static const char *hd_find(uint64_t h) {
+    for (int i = 0; i < (hd_on > 0 ? 2 : 1); i++) {
+        const HdHash *e = hd_sets[i].n ? bsearch(&h, hd_sets[i].h, hd_sets[i].n, sizeof *hd_sets[i].h, hd_cmp) : NULL;
+        if (e) return hd_sets[i].dir[e->dir];
+    }
     return NULL;
 }
 static bool hd_has(uint64_t h) { return hd_find(h) != NULL; }
@@ -690,10 +730,10 @@ static bool hd_candidate(const NvnTexture *t, const TexBackend *b) {
 static bool hd_load_dds(NvnTexture *t, TexBackend *b, uint64_t h, const char *path);
 
 static bool hd_replace(NvnTexture *t, TexBackend *b, uint64_t h) {
-    char path[80];
-    snprintf(path, sizeof path, "%s/%016llx.dds", hd_find(h)->dir, (unsigned long long)h);
+    char path[112];
+    snprintf(path, sizeof path, "%s/%016llx.dds", hd_find(h), (unsigned long long)h);
     if (hd_load_dds(t, b, h, path)) return true;
-    snprintf(path, sizeof path, "%s/%016llx.png", hd_find(h)->dir, (unsigned long long)h);
+    snprintf(path, sizeof path, "%s/%016llx.png", hd_find(h), (unsigned long long)h);
     SDL_Surface *s0 = SDL_LoadPNG(path);
     if (!s0) { LOG("[tex] %s: %s\n", path, SDL_GetError()); return false; }
     SDL_Surface *s = SDL_ConvertSurface(s0, SDL_PIXELFORMAT_ABGR8888);  // (R, G, B, A bytes)
@@ -835,7 +875,7 @@ static void hd_switch(void) {
     for (int i = 0; i < g_nlive; i++) {
         TexBackend *b = g_live[i];
         NvnTexture *t = b->owner;
-        if (was && !hd_on && b->hd && !(hd_sets[0].n && bsearch(&b->data_hash, hd_sets[0].h, hd_sets[0].n, sizeof b->data_hash, hd_cmp))) {
+        if (was && !hd_on && b->hd && !(hd_sets[0].n && bsearch(&b->data_hash, hd_sets[0].h, hd_sets[0].n, sizeof *hd_sets[0].h, hd_cmp))) {
             destroy_image(b);
             b->hd = false;
             create_image(t, b);

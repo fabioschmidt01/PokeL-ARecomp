@@ -157,6 +157,11 @@ static bool level_is_interior(void) {
 }
 
 bool widescreen_frame_boxed(uint64_t frame) {
+    // Pokémon Legends: Arceus: never boxed - the whole wide image is shown, its camera widened Hor+ (exec.c cbuf_info).
+    // The rules below are Link's Awakening's (its level name, its room cameras): game_in_play() is 0 for another game,
+    // which boxed every frame - a 16:9 window onto the middle of the wide image, stretched 2x at 32:9 (issue #1,
+    // 2026-11-12). LARECOMP_PLA_BOX=1: boxed as before.
+    if (!g_game_is_la) return ENV("LARECOMP_PLA_BOX") && strcmp(ENV("LARECOMP_PLA_BOX"), "0") != 0;
     static bool last;
     static uint64_t interior_until;  // keep boxing briefly after leaving: the first (dark) frames still show stale sides
     bool in = level_is_interior();

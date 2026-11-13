@@ -63,6 +63,7 @@ O código de máquina ARM64 do jogo é traduzido antecipadamente (AOT) para C e 
 - **Iluminação Avançada**: Oclusão de ambiente (XeGTAO), reflexos de água em espaço de tela (SSR), iluminação indireta (SSGI) e mapas de sombra de altíssima definição (até 4x).
 - **Suporte a HDR**: Saída scRGB / HDR10 com calibração de brilho máximo.
 - **Suporte a Pacotes de Texturas HD**: Carregamento direto da pasta `textures/hd/`.
+- **Ultrawide 21:9 / 32:9 (Hor+) — 🧪 Experimental**: em **F1 > Vídeo > Proporção > Livre (ultrawide)** a imagem ocupa a janela em qualquer formato: telas mais largas mostram mais do mundo nas laterais, sem esticar. O formato da janela é detectado automaticamente. *Ainda não foi 100% testado em monitores ultrawide reais — podem ocorrer bugs* (objetos aparecendo/sumindo nas bordas, efeitos ou interface fora do lugar). Por favor, reporte na [issue #1](https://github.com/fabioschmidt01/PokeL-ARecomp/issues/1). *16:9 original* mantém o enquadramento do jogo com barras laterais.
 
 ### Saves e Segurança
 - **Backup Automático Rotacional de Saves**: Gera cópias datadas em `save/backups/main_YYYYMMDD_HHMMSS.bak` a cada salvamento confirmado pelo jogo, retendo as 10 mais recentes contra falhas ou quedas de energia.
@@ -72,6 +73,7 @@ O código de máquina ARM64 do jogo é traduzido antecipadamente (AOT) para C e 
 
 ### Controles e Interface
 - Qualquer controle moderno via SDL3: Xbox, DualShock 4, DualSense, Switch Pro Controller, Steam Deck.
+- **Ícones de botão que seguem o seu mapeamento**: os ícones de Xbox e PlayStation mostram o botão que você realmente aperta, seja com o controle mapeado por posição (layout do Switch) ou por letra (`bind_pad_a = south`: A do Xbox / ✕ confirma). Mudanças valem a partir do próximo início.
 - Suporte total a Teclado e Mouse com controle suave de câmera pelo mouse e teclas totalmente remapeáveis.
 - Ícones de botões dinâmicos que se adaptam ao controle em uso.
 
