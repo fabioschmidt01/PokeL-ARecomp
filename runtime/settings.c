@@ -233,7 +233,9 @@ void settings_video_recommend(unsigned vendor, bool integrated, uint64_t vram, c
     VideoRec *r = &g_video_rec;
     r->profile = p;
     r->res_mode = p == VPROF_LIGHT ? RES_Q75 : p == VPROF_ULTRA ? RES_X15 : 1;
-    r->fps60 = p >= VPROF_HIGH;
+    // 30 fps whatever the PC: at 60, Pokémon Legends: Arceus's frame-counting systems run twice as fast (thrown food
+    // vanishes before wild Pokémon eat it, #9; fast menus and dialogue) - 60 stays the player's own, experimental choice
+    r->fps60 = false;
     r->aniso16 = p != VPROF_LIGHT;
     snprintf(r->gpu, sizeof r->gpu, "%s", gpu_name ? gpu_name : "");
     r->known = true;

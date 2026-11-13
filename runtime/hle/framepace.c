@@ -71,8 +71,8 @@ static bool fps60_holds(void) {
         last_setting = setting;
         g_fps60_fell_back = false, warm = slow = 0, t0 = 0;
     }
-    if (g_settings.framegen) return true;  // Frame generation active: never drop to 30 fps fallback
     if (!g_settings.fps60 || g_fps60_fell_back) return false;
+    if (g_settings.framegen) return true;  // (60 chosen with frame generation: never drops to the 30 fps fallback)
     if (g_settings.fps60_lock) return true;
     uint64_t now = plat_now_ns(), pc = renderer_present_count();
     if (!t0) { t0 = now, p0 = pc; return true; }
@@ -108,7 +108,10 @@ bool rt_pla_is_60fps(void) {
     g_za_frame_hook = true;
     const char *e = ENV("LARECOMP_FPS");
     if (e) return atoi(e) >= 60;
-    if (g_settings.framegen) return true;  // Keep 60 fps base clock for Frame Generation
+    // Frame generation no longer forces the 60 fps clock: it doubles whatever the game runs at. Pokémon Legends: Arceus
+    // counts frames in some of its systems (thrown food lasts half as long at 60 - wild Pokémon can't reach it, #9;
+    // menus, dialogue and some effects run fast; the reason FPSLocker never made it a 60 fps patch), so 30 fps with
+    // frame generation keeps the Switch's game logic and still shows 60.
     return g_settings.fps60;
 }
 

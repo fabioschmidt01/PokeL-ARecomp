@@ -464,14 +464,22 @@ static void tab_display(bool in_game) {
         extern bool g_za_frame_hook, g_fps60_fell_back;
         if (!in_game || g_za_frame_hook) {  // (g_game_is_la stays 1 until the boot: no help on the start screen)
             int fr = g_settings.fps60 ? 1 : 0;
-            const char *rates[] = {TR("30 fps (Switch)", "30 fps (Switch)"), "60 fps"};
+            // (Pokémon Legends: Arceus at 60: runtime/hle/framepace.c rt_pla_is_60fps - the systems that count frames)
+            const char *rates[] = {TR("30 fps (Switch, recommended)", "30 fps (Switch, recomendado)"),
+                                   TR("60 fps (experimental)", "60 fps (experimental)")};
             if (opt_choice(TR("Frame rate", "Taxa de quadros"), &fr, rates, 2, 0,
-                           TR("30 fps: as on the Switch. 60 fps: the game presents every refresh and steps its world 1/60 s "
-                              "a frame - smoother, but it needs a fast CPU and GPU: the game counts frames, not time, so "
-                              "below 60 fps everything moves in slow motion (see the next option).",
-                              "30 fps: como no Switch. 60 fps: o jogo mostra um quadro a cada atualização da tela e avança o "
-                              "mundo 1/60 s por quadro - mais fluido, mas pede CPU e GPU rápidas: o jogo conta quadros, não "
-                              "tempo, então abaixo de 60 fps tudo fica em câmera lenta (veja a próxima opção).")))
+                           TR("30 fps: as on the Switch - everything runs at its intended speed. Recommended.\n"
+                              "60 fps (EXPERIMENTAL): smoother camera and movement, but parts of Pokémon Legends: Arceus "
+                              "count frames instead of time and run twice as fast at 60: thrown food disappears before wild "
+                              "Pokémon can eat it, menus, dialogue and some effects are faster. These are known, long-standing "
+                              "limits of the game at 60 fps (no 60 fps patch for it has fixed them), not new bugs. Switch to "
+                              "30 fps to feed Pokémon. Frame generation (Advanced Video) can show 60 on top of 30 fps.",
+                              "30 fps: como no Switch - tudo roda na velocidade certa. Recomendado.\n"
+                              "60 fps (EXPERIMENTAL): câmera e movimento mais fluidos, mas partes do Pokémon Legends: Arceus "
+                              "contam quadros em vez de tempo e ficam duas vezes mais rápidas a 60: a comida jogada some antes "
+                              "de os Pokémon selvagens comerem, menus, diálogos e alguns efeitos ficam acelerados. São limites "
+                              "conhecidos e antigos do jogo a 60 fps (nenhum patch de 60 fps resolveu), não bugs novos. Volte "
+                              "para 30 fps para alimentar Pokémon. A geração de quadros (Vídeo Avançado) mostra 60 sobre 30 fps.")))
                 g_settings.fps60 = fr == 1;
             bool fall = !g_settings.fps60_lock;
             ImGui::BeginDisabled(!g_settings.fps60);
@@ -708,12 +716,17 @@ static void tab_video_advanced(bool in_game) {
 #endif
     {   // Frame Generation & HUD Decoupling
         int fg = g_settings.framegen ? 1 : 0;
-        const char *fg_rates[] = {TR("Off (1x)", "Desligado (1x)"), TR("On (2x - 90/120 FPS)", "Ligado (2x - 90/120 FPS)")};
+        // (runtime/nvn/vulkan/device.c: one blended frame between two game frames, framegen.frag - no motion estimation)
+        const char *fg_rates[] = {TR("Off (1x)", "Desligado (1x)"), TR("On (2x: 30 -> 60 / 60 -> 120)", "Ligado (2x: 30 -> 60 / 60 -> 120)")};
         if (opt_choice(TR("Frame generation", "Geração de quadros"), &fg, fg_rates, 2, 0,
-                       TR("Interpolates intermediate frames using Intel Arc / GPU optical flow & temporal pacing (90-120 FPS). "
-                          "Smooths gameplay without altering game logic clock. Automatically selects Mailbox presentation to prevent 30 FPS display lock.",
-                          "Interpola quadros intermediários usando fluxo óptico e estimativa temporal da GPU (90-120 FPS). "
-                          "Garante máxima fluidez sem alterar a velocidade do jogo. Ativa automaticamente apresentação Mailbox para não travar em 30 FPS.")))
+                       TR("Shows an extra frame between every two game frames: 60 on screen with the game at 30 fps (its "
+                          "logic stays at the Switch's speed), 120 at 60 fps. The extra frame is a blend of the two around "
+                          "it (no motion estimation): smoother in slow camera pans, with a ghost / trail on fast movement. "
+                          "Uses Mailbox presentation.",
+                          "Mostra um quadro extra entre cada dois quadros do jogo: 60 na tela com o jogo a 30 fps (a lógica "
+                          "continua na velocidade do Switch), 120 a 60 fps. O quadro extra é uma mistura dos dois vizinhos "
+                          "(sem estimativa de movimento): mais suave em giros lentos de câmera, com rastro / fantasma em "
+                          "movimentos rápidos. Usa apresentação Mailbox.")))
             g_settings.framegen = fg == 1;
 
         opt_toggle(TR("HUD Decoupling", "Desacoplamento de HUD"), &g_settings.hud_decoupling, true,

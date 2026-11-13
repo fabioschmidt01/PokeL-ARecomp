@@ -44,11 +44,11 @@ The game's ARM64 machine code is translated ahead-of-time (AOT) into C and compi
 ## Features
 
 ### Performance & Engine
-- **30 or 60 FPS Target (Option)**: Native game speed with dynamic delta-time pacing. The frame rate is unsteady in the open world (around 40–50 fps on the test machine, with drops in demanding areas), and there are brief hitches the first time each shader is compiled.
-- **Frame Generation (90–120 FPS)**: Optional hardware-accelerated optical flow frame interpolation smooths motion up to 90–120 FPS without speeding up game logic.
+- **30 FPS (recommended) or 60 FPS (⚠️ experimental)**: 30 FPS runs everything at the Switch's intended speed. At 60 FPS camera and movement keep their speed through dynamic delta-time pacing, but parts of the game count frames instead of time and run **twice as fast**: thrown food disappears before wild Pokémon can eat it ([#9](https://github.com/fabioschmidt01/PokeL-ARecomp/issues/9)), and menus, dialogue and some effects are faster. These are **known, long-standing limits of Pokémon Legends: Arceus at 60 FPS** — no 60 FPS patch for this game (emulator cheats, FPSLocker) has fixed them — not new bugs of this port. Switch to 30 FPS to feed Pokémon. The frame rate is unsteady in the open world (around 40–50 fps on the test machine), with brief hitches the first time each shader is compiled.
+- **Frame Generation (2x)**: shows an extra frame between every two game frames — **60 on screen with the game at 30 FPS** (its logic stays at the Switch's speed) or 120 at 60 FPS. The extra frame is a blend of its two neighbours (no motion estimation yet): smoother in slow camera pans, with ghosting on fast movement. Works on any GPU.
 - **HUD Decoupling**: Isolates 2D UI elements (minimap, health gauges, reticles, text) via `hdr_snapshot` to eliminate ghosting artifacts during Frame Generation.
 - **Explicit VSync Modes**: Choose between *Off (Low Latency / Mailbox)*, *On (VSync / 60 Hz - FIFO)*, or *Off (Unlimited / Immediate)* with instant swapchain recreation.
-- **True Uncapped FPS**: Smooth framerates beyond 60 FPS (up to 240 FPS) with dynamic delta-time floor scaling down to 4.16 ms when VSync is set to *Off (Unlimited)*, with zero physics speed-up.
+- **Uncapped FPS (⚠️ experimental)**: frame rates above 60 FPS (up to 240) with *VSync: Off (Unlimited)* and 60 FPS on. Camera and movement keep their speed, but the frame-counting systems above run even faster.
 - **Internal Resolution Scaling**: From 25% up to 4x native 1080p (4K UHD) with Dynamic Resolution scaling.
 - **High Core-Count Scaling (Intel Xeon & Multi-Core CPUs)**: Dynamic worker thread scaling (up to 8 parallel texture deswizzling threads on 16-24+ thread CPUs) eliminating texture streaming stutter.
 - **Dedicated GPU Memory Unlocking (Intel Arc & High-VRAM GPUs)**: Full 3.1 GB physical pool unlocked for GPUs with dedicated VRAM (such as the 12 GB Intel Arc B580 Battlemage), preventing memory thrashing.
