@@ -991,7 +991,11 @@ static void present_pace(int interval) {
     if (interval != logged) { logged = interval; LOG("[nvn] present interval %d\n", interval); }
     extern int g_out_present_interval;  // (output_scale.c: dynamic resolution's frame budget)
     g_out_present_interval = interval;
-    if (interval <= 0 || g_settings.vsync == 2) return;  // Uncapped / Immediate: no sleep pacing
+    // Uncapped (VSync: Off (Unlimited)): no sleep pacing - only where the game's clock follows the real frame time (60 fps:
+    // dynamic delta-time, runtime/hle/framepace.c). At 30 fps every frame is a fixed 1/30 s of game time, so presenting
+    // unpaced ran the game as fast as the PC drew it: 1.5x in the field (46 fps), 8x in menus (275 fps) - frame
+    // generation, which forced the 60 fps clock, used to hide it (test of 2026-11-13).
+    if (interval <= 0 || (g_settings.vsync == 2 && rt_pla_is_60fps())) return;
     if (interval > 4) interval = 1;  // (not a sane interval: the console's default)
     uint64_t period = 16666667ull * (uint64_t)interval, now = plat_now_ns();
     if (next > now && next - now <= period) plat_sleep_until_ns(next);
