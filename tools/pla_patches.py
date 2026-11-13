@@ -75,6 +75,27 @@ def _pla_crash_guard_store2(gen, a):
             f'  /* {a:#x}: null guard for stp x8, x19, [x20, #0x10] */')
 
 
+def _pla_proj_aspect(gen, a):
+    # 0x7002994e2c: ldr s8, [x19, #0x240] in the camera projection builder f_7002994d60, perspective branch: x19 the
+    # camera, [+0x23c] fovy, [+0x240] aspect (the game stores 16/9 there: six mov/movk 0x3fe38e39 sites), [+0x234] near,
+    # [+0x238] far; then P00 = cot(fovy / 2) / aspect, P11 = cot(fovy / 2) -> the matrix at [+0x2b0]. The three before
+    # leave s0 = fovy / 2 (the tanf argument). Through rt_pla_proj_aspect (runtime/hle/widescreen.c) a 16:9 camera
+    # takes the window's shape (Hor+ wider, Vert+ taller): every perspective camera's matrix is built here, so one
+    # site covers the field, battles and cutscenes alike; orthographic cameras (2D) take the other branch.
+    want = {a - 12: 0xbd423e60,  # ldr s0, [x19, #0x23c]
+            a - 8: 0x1e2c1001,   # fmov s1, #0.5
+            a - 4: 0x1e210800,   # fmul s0, s0, s1
+            a: 0xbd424268}       # ldr s8, [x19, #0x240]
+    for at, word in want.items():
+        w = struct.unpack_from('<I', gen.nso.image, at - gen.base)[0]
+        assert w == word, (hex(at), hex(w))
+    return ('{ extern float rt_pla_proj_aspect(float, float *); float a_, h_; '
+            'memcpy(&a_, (const void *)(uintptr_t)(c->x[19] + 0x240), 4); memcpy(&h_, &c->v[0], 4); '
+            'a_ = rt_pla_proj_aspect(a_, &h_); '
+            'c->v[8] = 0; memcpy(&c->v[8], &a_, 4); c->v[0] = 0; memcpy(&c->v[0], &h_, 4); }'
+            f'  /* {a:#x}: ldr s8, [x19, #0x240] (camera aspect; s0 = fovy / 2) */')
+
+
 def pla_patches(build):
     if build.lower() == 'aee8f150dda1b5a8':
         return {
@@ -85,5 +106,6 @@ def pla_patches(build):
             0x7002a8d734: _pla_crash_guard_store1,
             0x7002a8d750: _pla_crash_guard_null_check,
             0x7002a8d754: _pla_crash_guard_store2,
+            0x7002994e2c: _pla_proj_aspect,
         }
     return {}

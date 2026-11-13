@@ -3939,25 +3939,19 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
     if ((si->cbuf_dynamic & (1u << k)) && r.size) size = r.size > 0x10000 ? 0x10000 : r.size;
     if (size > r.size && r.size) size = r.size;
     if (size < 16) size = 16;
-    // The camera (F1 > Video > Field of view, and Hor+ in windows wider than 16:9): the scene camera's projection rows
-    // are scaled - x by fov / wide, y by fov - so a 32:9 window shows more at the sides instead of a 16:9 view
-    // stretched 2x (issue #1). Taller windows keep the horizontal view (y scaled by the factor instead).
+    // F1 > Video > Field of view: the scene camera's projection rows scaled (clip x and y alike). The window's shape
+    // is not done here any more: Pokémon Legends: Arceus's projection builder takes it (tools/pla_patches.py,
+    // runtime/hle/widescreen.c rt_pla_proj_aspect, PR #6) - scaling clip x here as well would widen the view twice.
     // Pokémon Legends: Arceus: the scene camera is slot 5 (CB8 in the translated shaders), rows: view 0-3, projection
     // 4-7, view-projection 8-11 (449 of the 460 vertex shaders reading CB8 build gl_Position from rows 8-11; found
     // 2026-11-12 decompiling cache/spirv). Fragment shaders project with it too (screen-space effects): both stages
-    // get the scaled copy. Only in passes whose target was widened (pass_sx / pass_sy = the widescreen factor): shadow
-    // maps and 16:9 offscreen passes keep the game's camera.
+    // get the scaled copy.
     // (v0.26.5 guessed the camera from any vertex UBO with a perspective-looking row: it took slot 7, the per-object
-    // world matrices (CB10), and squashed objects along world x while the real camera stayed 16:9)
+    // world matrices (CB10), and squashed objects along world x - the FOV slider had no visible effect on the view)
     // LARECOMP_CAM_SLOT=<n>: another slot (-1: off), LARECOMP_CAM_GENERIC=1: that old guess as well,
     // LARECOMP_LOG_CAM=1: the camera rows as found (once per stage and size), =2: also every UBO slot seen in a widened
     // pass (first 16 floats, 96 lines), to find other cameras (particles, effects).
     if ((stage == 0 || (stage == 1 && !g_game_is_la)) && r.addr && size >= 64) {
-        extern float widescreen_factor(void);
-        float wide = widescreen_factor();
-        if (!(wide > 0.0f) || g_game_is_la) wide = 1.0f;  // (Link's Awakening: its camera code is patched instead)
-        bool widened = pass_sy > 0 && fabsf(pass_sx / pass_sy - wide) < 0.02f * wide;
-        if (!widened) wide = 1.0f;
         float fov_scale = 1.0f;
         if (g_settings.fov >= FOV_MIN && g_settings.fov <= FOV_MAX && g_settings.fov != FOV_DEFAULT) {
             fov_scale = tanf(30.0f * (float)M_PI / 180.0f) / tanf(((float)g_settings.fov * 0.5f) * (float)M_PI / 180.0f);
@@ -3967,7 +3961,7 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
         if (cam_slot == -2) cam_slot = getenv("LARECOMP_CAM_SLOT") ? atoi(getenv("LARECOMP_CAM_SLOT")) : 5;
         if (cam_generic < 0) cam_generic = getenv("LARECOMP_CAM_GENERIC") ? atoi(getenv("LARECOMP_CAM_GENERIC")) != 0 : 0;
         const float *u = (const float *)(uintptr_t)r.addr;
-        if (log_cam >= 2 && wide > 1.001f) {
+        if (log_cam >= 2 && fabsf(pass_sx - pass_sy) > 0.01f * pass_sy) {
             static int nlog;
             static struct { int stage, idx; uint64_t size; } seen[96];
             bool dup = false;
@@ -3980,10 +3974,8 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
                     u[2], u[3], u[4], u[5], u[6], u[7], u[8], u[9], u[10], u[11], u[12], u[13], u[14], u[15]);
             }
         }
-        if (fov_scale != 1.0f || wide > 1.001f || wide < 0.999f) {
+        if (fov_scale != 1.0f) {
             float sx = fov_scale, sy = fov_scale;
-            if (wide >= 1.0f) sx /= wide;
-            else sy *= wide;
             int proj_offset = -1, vp_offset = -1;
             const char *how = NULL;
             if (!g_game_is_la) {
@@ -4033,9 +4025,9 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
                     cam_cache[cs][cidx].span = s;
                     static float s_logged_sx[2][18], s_logged_sy[2][18];
                     if (s_logged_sx[cs][cidx] != sx || s_logged_sy[cs][cidx] != sy) {
-                        LOG("[fov] camera scaled: slot %d (CB%d) %s, size %llu, %s%s: fov %d wide %.2f -> sx %.3f sy %.3f\n",
+                        LOG("[fov] camera scaled: slot %d (CB%d) %s, size %llu, %s%s: fov %d -> scale %.3f\n",
                             idx, k, stage ? "fragment" : "vertex", (unsigned long long)size, how,
-                            proj_offset >= 0 ? " (+ projection)" : "", g_settings.fov, wide, sx, sy);
+                            proj_offset >= 0 ? " (+ projection)" : "", g_settings.fov, sx);
                         s_logged_sx[cs][cidx] = sx, s_logged_sy[cs][cidx] = sy;
                     }
                     if (log_cam >= 1) {
@@ -6717,6 +6709,16 @@ static uint64_t prof_tp_;
 static bool fsr2_copy(Prog *pr);
 static bool water_is_surface(Prog *pr);
 static void water_before(void);
+// A draw into a reshaped (wider / taller than 16:9) pass at the uniform scale, centred: UI keeps its 16:9 layout.
+static void vp_box_16_9(void) {
+    int pw, ph;
+    pass_size(&pw, &ph);
+    float u = fminf(pass_sx, pass_sy);
+    vp_sx = vp_sy = u;
+    vp_ox = (pw - st.rt.color[0]->width * u) * 0.5f;
+    vp_oy = (ph - st.rt.color[0]->height * u) * 0.5f;
+}
+
 static void draw_(CmdRec *r, bool indexed) {
     if (prof) prof_tp_ = SDL_GetTicksNS();
     if (!st.program) { SKIP(SK_NO_PROGRAM); return; }
@@ -7100,13 +7102,19 @@ static void draw_(CmdRec *r, bool indexed) {
         }
         bool composite = reads_scene || fade_fill || (fullscreen_fill && wide_frame == renderer_exec_frame());
         if (!composite) wide_frame = ~0ull;
-        if (!composite) {
-            int pw, ph;
-            pass_size(&pw, &ph);
-            float u = fminf(pass_sx, pass_sy);
-            vp_sx = vp_sy = u;
-            vp_ox = (pw - st.rt.color[0]->width * u) * 0.5f;
-            vp_oy = (ph - st.rt.color[0]->height * u) * 0.5f;
+        if (!composite) vp_box_16_9();
+    } else if (fabsf(pass_sx - pass_sy) > 0.01f * pass_sy && st.rt.ncolor && st.ubuf[0][0].addr) {
+        // HUD layout panes drawn into a reshaped target that isn't the window texture (Pokémon Legends: Arceus's
+        // composite target): the same centred 16:9 box (runtime/hle/widescreen.c widescreen_ui_boxed)
+        extern bool widescreen_ui_boxed(const float *u, uint64_t size);
+        const float *u = (const float *)(uintptr_t)st.ubuf[0][0].addr;
+        bool boxed = widescreen_ui_boxed(u, st.ubuf[0][0].size);
+        if (boxed) vp_box_16_9();
+        if (g_debug_frame && (st.ubuf[0][0].size == 128 || st.ubuf[0][0].size == 560)) {  // (layout pane / font text)
+            LOG("[draw]   ui %s %s: proj %g %g %g %g / %g %g %g %g", st.ubuf[0][0].size == 560 ? "pane" : "text",
+                boxed ? "boxed" : "not boxed", u[0], u[3], u[5], u[7], u[12], u[13], u[14], u[15]);
+            if (st.ubuf[0][0].size == 560) LOG(", rect %g %g %g %g", u[132], u[133], u[134], u[135]);
+            LOG("\n");
         }
     }
     {   // camera-attached effects sized for 16:9 are widened with the view (runtime/hle/widescreen.c)
