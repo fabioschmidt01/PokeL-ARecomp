@@ -62,8 +62,8 @@ float widescreen_effect_stretch(uint64_t fs_hash) {
 bool widescreen_ui_pane_partial(const float *u, uint64_t size) {
     if (!u || size != 560) return false;
     if (u[15] != 1 || u[12] != 0 || u[13] != 0 || !(u[0] > 0) || u[5] == 0) return false;  // (orthographic projection)
-    float w = u[132], h = u[133], l = u[134], t = u[135];
-    if (!(w > 0) || !(h > 0) || !(w < 1e5f) || !(h < 1e5f)) return false;
+    float w = u[132], h = u[133], l = u[134], t = u[135];  // (a flipped pane: negative w / h, same corners below)
+    if (!(fabsf(w) > 0) || !(fabsf(h) > 0) || !(fabsf(w) < 1e5f) || !(fabsf(h) < 1e5f)) return false;
     float lo[2] = {1e9f, 1e9f}, hi[2] = {-1e9f, -1e9f};
     for (int i = 0; i < 4; i++) {
         float x = l + (i & 1 ? w : 0), y = t - (i & 2 ? h : 0);
@@ -87,7 +87,10 @@ static bool ui_text_draw(const float *u, uint64_t size) {
     if (!u || size != 128) return false;
     if (u[12] != 0 || u[13] != 0 || u[14] != 0 || u[15] != 1) return false;  // (affine: no 3D view-projection)
     if (u[1] != 0 || u[2] != 0 || u[4] != 0 || u[6] != 0 || u[8] != 0 || u[9] != 0) return false;  // (unrotated, flat)
-    float sx = u[0] * 960, sy = fabsf(u[5]) * 540;  // the same scale in the 1920x1080 layout's units, both ways
+    // the same scale in the 1920x1080 layout's units, both ways (either sign: a mirrored icon - the ride selector's
+    // left arrow is its right one flipped - is HUD too; it was left out of the box, a lone arrow at the window's
+    // right edge at 32:9, test of 2026-11-12)
+    float sx = fabsf(u[0]) * 960, sy = fabsf(u[5]) * 540;
     return sx > 0.05f && sx < 20 && fabsf(sx - sy) < 1e-3f * sx;
 }
 bool widescreen_ui_boxed(const float *u, uint64_t size) {
