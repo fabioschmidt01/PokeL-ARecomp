@@ -996,7 +996,12 @@ static void present_pace(int interval) {
     // unpaced ran the game as fast as the PC drew it: 1.5x in the field (46 fps), 8x in menus (275 fps) - frame
     // generation, which forced the 60 fps clock, used to hide it (test of 2026-11-13).
     extern void pace_report(int interval, bool paced);  // (runtime/hle/framepace.c: the log's [speed] lines)
-    bool paced = !(interval <= 0 || (g_settings.vsync == 2 && rt_pla_is_60fps()));
+    // Pokémon Legends: Arceus: never unpaced, whatever VSync says - its frame-counting systems (thrown food, menus,
+    // dialogue) run as fast as the frames: 60 fps + VSync off (Unlimited) drew menus at 190 fps, ~6x their speed, and
+    // food vanished before Pokémon reached it ([speed] lines of 2026-11-13). "Unlimited" still presents without waiting
+    // for the display, capped at the chosen 30 / 60. LARECOMP_PRESENT_INTERVAL=0: unpaced, for tests.
+    extern int g_game_is_la;
+    bool paced = !(interval <= 0 || (g_settings.vsync == 2 && g_game_is_la && rt_pla_is_60fps()));
     pace_report(interval, paced);
     if (!paced) return;
     if (interval > 4) interval = 1;  // (not a sane interval: the console's default)

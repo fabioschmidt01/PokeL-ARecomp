@@ -48,7 +48,7 @@ The game's ARM64 machine code is translated ahead-of-time (AOT) into C and compi
 - **Frame Generation (2x)**: shows an extra frame between every two game frames — **60 on screen with the game at 30 FPS** (its logic stays at the Switch's speed) or 120 at 60 FPS. The extra frame is a blend of its two neighbours (no motion estimation yet): smoother in slow camera pans, with ghosting on fast movement. Works on any GPU.
 - **HUD Decoupling**: Isolates 2D UI elements (minimap, health gauges, reticles, text) via `hdr_snapshot` to eliminate ghosting artifacts during Frame Generation.
 - **Explicit VSync Modes**: Choose between *Off (Low Latency / Mailbox)*, *On (VSync / 60 Hz - FIFO)*, or *Off (Unlimited / Immediate)* with instant swapchain recreation.
-- **Uncapped FPS (⚠️ experimental)**: frame rates above 60 FPS (up to 240) with *VSync: Off (Unlimited)* and 60 FPS on. Camera and movement keep their speed, but the frame-counting systems above run even faster.
+- **VSync: Off (Unlimited)**: presents without waiting for the display (lowest latency, may tear), but always capped at the chosen 30 or 60 FPS — running faster made the frame-counting systems (menus, thrown food) faster still.
 - **Internal Resolution Scaling**: From 25% up to 4x native 1080p (4K UHD) with Dynamic Resolution scaling.
 - **High Core-Count Scaling (Intel Xeon & Multi-Core CPUs)**: Dynamic worker thread scaling (up to 8 parallel texture deswizzling threads on 16-24+ thread CPUs) eliminating texture streaming stutter.
 - **Dedicated GPU Memory Unlocking (Intel Arc & High-VRAM GPUs)**: Full 3.1 GB physical pool unlocked for GPUs with dedicated VRAM (such as the 12 GB Intel Arc B580 Battlemage), preventing memory thrashing.

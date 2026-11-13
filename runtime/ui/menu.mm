@@ -508,12 +508,12 @@ static void tab_display(bool in_game) {
         if (opt_choice(TR("VSync Mode", "Modo VSync"), &vs, vs_names, 3, 0,
                        TR("Off (Mailbox): newest frame shown at display refresh - tear-free low latency, optimal for Frame Generation.\n"
                           "On (VSync 60 Hz): locks presentation to 60 Hz display refresh (FIFO).\n"
-                          "Off (Uncapped): with 60 fps (experimental), removes the frame rate cap. At 30 fps the game keeps "
-                          "its 30 fps pace (unpaced, it ran too fast).",
+                          "Off (Unlimited): presents without waiting for the display (lowest latency, may tear), still capped at "
+                          "the chosen 30 / 60 fps - above that, the game's frame-counting systems (menus, thrown food) ran too fast.",
                           "Desligado (Mailbox): exibe o quadro mais recente no ciclo da tela - sem tearing e baixa latência, ideal para Frame Generation.\n"
                           "Ligado (VSync 60 Hz): sincroniza com a taxa da tela (FIFO).\n"
-                          "Desligado (Ilimitado): com 60 fps (experimental), tira o limite de FPS. Em 30 fps o jogo mantém o "
-                          "ritmo de 30 fps (sem ritmo ele rodava acelerado)."))) {
+                          "Desligado (Ilimitado): apresenta sem esperar a tela (menor latência, pode ter tearing), mas ainda "
+                          "limitado aos 30 / 60 fps escolhidos - acima disso, o que o jogo conta por quadro (menus, comida) ficava acelerado."))) {
             g_settings.vsync = vs;
             g_settings.present_fifo = (vs == 1);
         }
