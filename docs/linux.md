@@ -152,7 +152,15 @@ Switches: `LARECOMP_VK_CS_SUBGROUP=0` leaves compute to the driver's 64-lane wav
 `vkQueueSubmit2`). `perf record -t <render thread>` sees user space only (perf_event_paranoid=2); the `[vk] t=` log line's
 `submit` ms shows the kernel time inside the submit ioctl.
 
-## ZA Recomp on Linux (native, x86-64)
+## PokeL-ARecomp on Linux (native, x86-64)
+> PokeL-ARecomp's AppImage is built by `tools/za/dist-linux.sh` below. Its data folder is
+> `~/.local/share/plarecomp` (`$XDG_DATA_HOME/plarecomp` when `XDG_DATA_HOME` is an absolute path), separate from LAS
+> Recomp's `lasrecomp/`, ZA Recomp's `zarecomp/` and PokeV-Recomp's `pokev-recomp/`; nothing is moved or migrated
+> between them. The start screen only sets up and compiles Pokémon Legends: Arceus 1.1.1 (build `aee8f150dda1b5a8`):
+> other games' files are refused by name, and game files another app set up (e.g. Pokémon Violet's, written into
+> `plarecomp/` by PokeV-Recomp v0.0.24 and older) are never deleted, imported over or compiled - move them out by hand.
+> The rest of this section is the Z-A port's history, which PokeL-ARecomp's Linux build comes from.
+
 Experimental. ZA Recomp builds and runs natively on Linux x86-64 (no Wine / Proton) and can be packaged as an
 AppImage. Most of what makes that possible was already here, from LAS Recomp: the Linux platform layer
 (`runtime/platform/linux.c`), the ELF game code library (`lasgame.so`), the Vulkan backend shared with Windows, page
@@ -160,8 +168,8 @@ write tracking, the pinned dependency build (`tools/linux/build_deps.sh`), and t
 was added for Pokémon Z-A on Linux:
 
 - FSR 2 compiles outside Windows (`FFX_GCC`, `size_t`, `wcscpy_s`); a dev build linked against `DEPS` gets an rpath.
-- Its own data folder, `~/.local/share/zarecomp` (`$XDG_DATA_HOME/zarecomp`), not LAS Recomp's `lasrecomp/` (both
-  installed would share saves, game files and `larecomp.ini`).
+- Its own data folder (PokeL-ARecomp: `~/.local/share/plarecomp`, `$XDG_DATA_HOME/plarecomp`), not LAS Recomp's
+  `lasrecomp/` (both installed would share saves, game files and `larecomp.ini`).
 - A first run copies the release's settings (`za-default.ini`, shipped next to the app) into the data folder as
   `larecomp.ini`, as the Windows zip does with the `larecomp.ini` next to the exe.
 - `ooz` (the zaprompts helper's decompressor) builds as `libooz.so` through stand-in Windows headers
@@ -193,7 +201,7 @@ published self-contained, so players need no .NET); `patchelf` likewise.
 
     tools/za/build-linux.sh          # the start screen: build/linux/x86_64/za/lasrecomp (run it from the repo root)
     GAME=1 JOBS=3 tools/za/build-linux.sh   # + the game code (generated/ and lasgame.so) from your own extracted/
-    tools/za/dist-linux.sh           # build/dist/ZA Recomp-<version>-linux-x86_64.AppImage (ZAIMPORT=0: no importer)
+    tools/za/dist-linux.sh           # build/dist/PokeL-ARecomp-<version>-linux-x86_64.AppImage (ZAIMPORT=0: no importer)
 
 The app is built with the Windows release's game code flags (`GENOPT="-O1 -DGUEST_VOLATILE"`, x86-64-v3).
 `GAME=1` compiles giant functions at -O0 first, with the start screen's own rule (`runtime/gamebuild.c` cold_giant),

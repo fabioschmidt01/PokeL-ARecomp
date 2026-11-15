@@ -121,10 +121,10 @@ with tempfile.TemporaryDirectory() as directory:
     t = run('target', home / 'save')
     assert t['REFUSE'] == 'That folder is inside the data folder.', t
     t = run('target', S / 'misc')
-    assert Path(t['PATH']) == S / 'misc' / 'LAS Recomp' and not t['REFUSE'] and t['HAS_DATA'] == '0', t
+    assert Path(t['PATH']) == S / 'misc' / 'PokeL-ARecomp' and not t['REFUSE'] and t['HAS_DATA'] == '0', t
     t = run('target', S / 'empty')
     assert Path(t['PATH']) == S / 'empty' and not t['REFUSE'] and int(t['BYTES']) > 10_000_000, t
-    print('target: the folder itself when empty, a "LAS Recomp" folder in a full one; the data folder and folders '
+    print('target: the folder itself when empty, a "PokeL-ARecomp" folder in a full one; the data folder and folders '
           'in it refused')
 
     for links in (True, False):  # (same drive: hard links; LARECOMP_MOVE_NO_LINKS: copied as to another drive)

@@ -1,6 +1,6 @@
 #!/bin/bash
-# ZA Recomp release for Linux x86-64, built natively (the Linux counterpart of tools/za/dist.sh):
-# build/dist/ZA Recomp-<version>-linux-x86_64.AppImage. No game code or game files: the start screen reads the player's
+# PokeL-ARecomp release for Linux x86-64, built natively (the Linux counterpart of tools/za/dist.sh):
+# build/dist/PokeL-ARecomp-<version>-linux-x86_64.AppImage. No game code or game files: the start screen reads the player's
 # own .xci / .nsp with their prod.keys (zaimport/) or an extracted exefs + romfs, and recompiles the game on their
 # machine (lasgen/ = tools/gen.py frozen by PyInstaller, zig/ = the compiler, gamelib-src/ = the headers it includes).
 # Built against this machine's glibc: the AppImage runs on distributions at least as new (Linux Mint 22 / Ubuntu 24.04

@@ -1,4 +1,4 @@
-// Where LAS Recomp keeps its files (runtime/paths.c).
+// Where PokeL-ARecomp keeps its files (runtime/paths.c).
 //
 // Data root: everything the app writes or the user brings - extracted/ (game files), rando/ (seeds), save/,
 // cache/ (shaders / pipelines), fonts/ (imported), larecomp.ini. rt_paths_init() picks it and makes it the
@@ -10,8 +10,9 @@
 //      app); asks to try again / use the default when it's missing (a drive not connected)
 //   4. macOS: ~/Library/Application Support/com.peiikai.lasrecomp (the .app bundle itself is never written to)
 //      Windows: the folder of the .exe (portable, no installer); refuses to start, with a message, if not writable
-//      Linux: $XDG_DATA_HOME/zarecomp (~/.local/share/zarecomp; Pokémon Z-A: not LAS Recomp's lasrecomp/, its saves
-//      and larecomp.ini would be shared)
+//      Linux: $XDG_DATA_HOME/plarecomp (~/.local/share/plarecomp when XDG_DATA_HOME is unset or relative;
+//      RT_LINUX_DATA_DIR): PokeL-ARecomp's own - not LAS Recomp's lasrecomp/, ZA Recomp's zarecomp/ or PokeV-Recomp's
+//      pokev-recomp/ (their saves, larecomp.ini and extracted/ would be shared)
 //      LARECOMP_DATA_HOME (tests) stands in for it.
 //
 // Resources: files that ship with the app (helper programs, the window icon) - next to the executable (the
@@ -25,6 +26,7 @@ extern "C" {
 #endif
 
 #define RT_BUNDLE_ID "com.peiikai.lasrecomp"
+#define RT_LINUX_DATA_DIR "plarecomp"  // (under $XDG_DATA_HOME, else ~/.local/share; every release so far used it)
 
 void rt_paths_init(void);         // first thing in main(), after plat_init
 const char *rt_data_root(void);   // absolute
@@ -36,11 +38,11 @@ bool rt_data_root_early(char *out, size_t n);
 // Choosing another data folder (the start screen). NULL = it can be changed; else why not (rules 1 / 2).
 const char *rt_data_root_fixed(void);
 typedef struct {
-    char path[1100];               // where the data would go: the folder picked, or a "LAS Recomp" folder in it
+    char path[1100];               // where the data would go: the folder picked, or a "PokeL-ARecomp" folder in it
                                    // when it holds other things
     unsigned long long bytes;      // the data now (saves, seeds, settings, fonts, caches, game files)
     unsigned long long need, free; // space a move needs there (little on the same drive: hard links), space there
-    bool has_data;                 // LAS Recomp data already there: used as is, not moved into
+    bool has_data;                 // PokeL-ARecomp data already there: used as is, not moved into
     char refuse[160];              // why it can't be the data folder ("" = it can)
 } RtDataTarget;
 void rt_data_target(const char *picked, RtDataTarget *t);
@@ -65,6 +67,13 @@ bool rt_resource(const char *name, const char *dev_rel, char *out, size_t n);
 bool rt_remove_game_file(const char *game_dir, const char *name);
 // All the game files set up there (rt_remove_game_file on each, then the empty folder). Saves, seeds, settings stay.
 bool rt_remove_game_files(const char *game_dir);
+// game_dir holds another recomp's game files (Violet, Z-A, Link's Awakening: runtime/game_identity.h): never deleted
+// or written over (rt_remove_game_files refuses them; the start screen's setup stops). what: "Pokémon Violet 3.0.1".
+// Pokémon Legends: Arceus's own files, unknown builds, no files, and files this app set up itself (marked by
+// rt_mark_game_files_ours: e.g. a Z-A dump the player picked by mistake, imported before its build could be read): false.
+bool rt_game_files_foreign(const char *game_dir, char *what, size_t n);
+// The start screen's setup marks game_dir as this app's own copy before it copies or imports anything into it.
+bool rt_mark_game_files_ours(const char *game_dir);
 // Bytes taken by the extracted game files in game_dir (links not followed).
 unsigned long long rt_game_files_size(const char *game_dir);
 // Bytes taken by everything under path (links not followed).

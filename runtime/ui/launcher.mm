@@ -36,6 +36,7 @@
 extern "C" {
 #include "platform.h"
 #include "paths.h"
+#include "game_identity.h"
 #include "gamebuild.h"
 #include "gamelib.h"
 #include "romfs_build.h"
@@ -83,24 +84,13 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 }
 #endif
 
-static const uint8_t BUILD_ID[8] = {0xae, 0x16, 0xf7, 0x1e, 0x00, 0x2a, 0xf8, 0xcb};  // Link's Awakening v1.0.0 main
-// Pokémon Legends Z-A's main builds (tools/patches.py ZA_BUILDS): set up from the player's .xci / .nsp and keys by the
-// bundled tools/zaimport (no extracted folder), no romfs/ copy - the game reads romfs.bin (+ aoc/ for the DLC)
-static const struct { uint8_t id[8]; const char *version; } ZA_BUILDS[] = {
-    {{0x72, 0x22, 0xe1, 0x3e, 0xcf, 0x6a, 0xdb, 0x32}, "1.0.0"},
-    {{0x8a, 0x1c, 0x86, 0xc4, 0x37, 0x39, 0x4b, 0x69}, "2.0.0"},
-    {{0xb1, 0xf1, 0x2f, 0xd9, 0x19, 0xea, 0xe8, 0x6a}, "2.0.2"},
-    // Pokémon Legends Arceus (tools/pla_patches.py PLA_BUILDS): set up the same way, zaimport reads its packages too
-    {{0xae, 0xe8, 0xf1, 0x50, 0xdd, 0xa1, 0xb5, 0xa8}, "1.1.1"},
-};
-// the version of a main module's build id: NULL = not one we know
-static const char *build_version(const uint8_t id[8]) {
-    if (!memcmp(id, BUILD_ID, 8)) return "1.0.0";
-    for (auto &b : ZA_BUILDS)
-        if (!memcmp(id, b.id, 8)) return b.version;
-    return NULL;
-}
-static bool build_is_za(const uint8_t id[8]) { return build_version(id) && memcmp(id, BUILD_ID, 8); }
+// The version of a main module's build id: NULL = not Pokémon Legends: Arceus 1.1.1 (runtime/game_identity.h, from
+// tools/pla_patches.py PLA_BUILDS). Link's Awakening and Z-A builds used to pass here too, so another recomp's
+// extracted/ in the data folder counted as set up ("Compile now" on its files): they are refused now, by name.
+static const char *build_version(const uint8_t id[8]) { return game_identity_supported(id); }
+// Set up from the player's .xci / .nsp and keys by the bundled tools/zaimport (romfs.bin), or from an extracted exefs +
+// romfs (a romfs/ folder with arc/data.trpfs): the supported build has no Link's Awakening region_common/
+static bool build_is_za(const uint8_t id[8]) { return build_version(id) != NULL; }
 // The release tag this build is (also names the release files; Makefile / tools/bundle_macos.sh / make_dmg.sh read
 // it): PokeL-ARecomp's v<major>.<minor>.<patch>.
 #define LARECOMP_VERSION "v0.26.7"
@@ -421,9 +411,9 @@ static const char *fail_head(int k, bool pt) {
 static const char *fail_hint(int k, bool pt) {
     static const char *const en[] = {
         "",
-        "Choose the folder with your Pok\xc3\xa9mon Legends Z-A game extracted (exefs and romfs folders), or with your "
-        "dump (.xci / .nsp) and your prod.keys.",
-        "Pok\xc3\xa9mon Legends Z-A's base game isn't among those files. Choose the folder with your own dump.",
+        "Choose the folder with your Pok\xc3\xa9mon Legends: Arceus game extracted (exefs and romfs folders), or with "
+        "your dump (.xci / .nsp) and your prod.keys.",
+        "Pok\xc3\xa9mon Legends: Arceus's base game isn't among those files. Choose the folder with your own dump.",
         "Make sure there's about 12 GB free and try again.",
         "PokeL-ARecomp runs version 1.1.1 of the game (base game + the 1.1.1 / v262144 update).",
         "Some files are missing. Choose the folder again; if it happens again, dump the game again.",
@@ -482,6 +472,16 @@ static void find_game(const std::string &dir, int depth, std::string &exefs, std
 static bool build_id_ok(const std::string &main_path) {
     uint8_t id[8];
     return read_build_id(main_path, id) && build_version(id);
+}
+
+// A refused main module, for the failure panel: which game / version it is ("" when it can't be read)
+static std::string build_id_detail(const std::string &main_path) {
+    uint8_t id[8];
+    if (!read_build_id(main_path, id)) return "";
+    char what[128];
+    game_identity_describe(id, what, sizeof what);
+    fprintf(stderr, "[launcher] %s: %s, not Pok\xc3\xa9mon Legends: Arceus 1.1.1 - refused\n", main_path.c_str(), what);
+    return std::string(TR("These files are ", "Esses arquivos s\xc3\xa3o de ")) + what + ".";
 }
 
 // ------------------------------------------------------------------ Z-A: the player's packages -> game files
@@ -826,6 +826,12 @@ static bool build_game_code(void) {
     if (jobs < 1) jobs = 1;
     if (jobs > 10) jobs = 10;
     GameBuildOpts o = {build_progress, jobs, build_cancelled};
+    // (only Pokémon Legends: Arceus 1.1.1's code is ever compiled: every path here checked it already - this is the
+    // last word, so no other game's files in the data folder can reach the generator and overwrite their game code)
+    if (!build_id_ok(g_root + "/exefs/main")) {
+        set_failure(FAIL_VERSION, build_id_detail(g_root + "/exefs/main"));
+        return false;
+    }
     char why[256] = "";
     g_build_frac = 0;
     bool ok = gamebuild_run(g_root.c_str(), &o, why, sizeof why);
@@ -848,6 +854,22 @@ static void *extract_thread(void *) {
     std::string exefs, romfs;
     std::vector<std::string> pkgs;
     bool unusable = false;  // (game packages rather than its files)
+    {   // the data folder holds another recomp's game files (Violet's, set up in plarecomp/ by PokeV-Recomp v0.0.24 and
+        // older; another app's whole folder made the data root is refused earlier, in rt_paths_init): nothing is
+        // deleted, imported over or compiled there
+        char what[160];
+        if (rt_game_files_foreign(g_root.c_str(), what, sizeof what)) {
+            fprintf(stderr, "[launcher] %s holds %s's game files (another app's): not set up over them\n",
+                    g_root.c_str(), what);
+            set_failure(FAIL_VERSION, std::string(TR("The data folder holds ", "A pasta de dados tem os arquivos de ")) +
+                                          what + TR("'s files, from another app: they are left as they are. Move "
+                                                    "the extracted folder out of the data folder yourself, then set the "
+                                                    "game up again.", ", de outro programa: eles ficam como est\xc3\xa3o. "
+                                                    "Tire a pasta extracted da pasta de dados voc\xc3\xaa mesmo e prepare "
+                                                    "o jogo de novo."));
+            goto done;
+        }
+    }
     if (src.empty() && check_copied_files(g_root).empty()) {  // copied already (an update needs new game code)
         g_copy_skipped = true;
         if (!build_game_code()) goto done;
@@ -875,6 +897,7 @@ static void *extract_thread(void *) {
                 title_keys.empty() ? "-" : title_keys.c_str());
         rt_remove_game_files(g_root.c_str());
         mkdir(g_root.c_str(), 0755);
+        rt_mark_game_files_ours(g_root.c_str());  // (what's imported is ours to remove, whichever game it is)
         g_import_mode = true;
         set_job("Reading your game files...");
         if (!import_packages(pkgs, keys, title_keys, err)) {
@@ -882,14 +905,17 @@ static void *extract_thread(void *) {
                             ? FAIL_UNUSABLE : FAIL_IMPORT, err);
             goto done;
         }
-        if (!build_id_ok(g_root + "/exefs/main")) { set_failure(FAIL_VERSION); goto done; }
+        if (!build_id_ok(g_root + "/exefs/main")) {
+            set_failure(FAIL_VERSION, build_id_detail(g_root + "/exefs/main"));
+            goto done;
+        }
         if (!build_game_code()) goto done;
         goto check;
     }
     if (exefs.empty() || romfs.empty()) { set_failure(unusable ? FAIL_UNUSABLE : FAIL_NOT_FOUND); goto done; }
-    if (!build_id_ok(exefs + "/main")) { set_failure(FAIL_VERSION); goto done; }
+    if (!build_id_ok(exefs + "/main")) { set_failure(FAIL_VERSION, build_id_detail(exefs + "/main")); goto done; }
     {
-        // (the picked folder can't be LAS Recomp's own copy: setting up again deletes that first)
+        // (the picked folder can't be PokeL-ARecomp's own copy: setting up again deletes that first)
         char a[4096], b[4096];
         mkdir(g_root.c_str(), 0755);
         if (realpath(exefs.c_str(), a) && realpath(g_root.c_str(), b) && !strncmp(a, b, strlen(b)) &&
@@ -899,6 +925,7 @@ static void *extract_thread(void *) {
         }
         rt_remove_game_files(g_root.c_str());  // (an earlier or interrupted setup's; removes the folder too)
         mkdir(g_root.c_str(), 0755);
+        rt_mark_game_files_ours(g_root.c_str());
         unsigned long long rbytes = romfs_dir_bytes(romfs.c_str());
         g_total = rbytes;
         set_job("Copying the game files...");

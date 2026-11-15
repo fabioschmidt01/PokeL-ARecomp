@@ -111,6 +111,13 @@ the native compiler (defaults: `clang` / `clang++`). For a release smoke test,
 cancel a real game-code build after some objects finish, resume it, inspect the
 reused/compiled counts in the log, and launch the resulting game library.
 
+Game identity and data folder tests use synthetic NSO headers and scratch folders, never your own game files or saves:
+`python tools/test_game_identity.py` (only Pokémon Legends: Arceus 1.1.1 is set up and compiled; other games' builds
+are refused by name) and, on Linux, `python tools/test_data_dir.py` (the data folder is `plarecomp/`, other recomps'
+folders stay byte for byte unchanged, and their game files are never deleted). `tools/test_data_dir.py`,
+`tools/test_delete_guard.py` and `tools/test_data_move.py` link SDL3: `DEPS=build/linux/x86_64/deps` after
+`tools/za/build-linux.sh`, or a system SDL3 found by `pkg-config`.
+
 ## Code style
 
 - Match the surrounding code: its naming, structure and comment density. Comments explain *why* (what the game does,

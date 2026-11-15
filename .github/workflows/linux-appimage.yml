@@ -1,4 +1,4 @@
-# ZA Recomp's Linux AppImage (tools/za/dist-linux.sh) built in Ubuntu 22.04 - tools/linux/Containerfile's image, the
+# PokeL-ARecomp's Linux AppImage (tools/za/dist-linux.sh) built in Ubuntu 22.04 - tools/linux/Containerfile's image, the
 # one LAS Recomp's AppImages use - so it runs on glibc 2.35+ distributions (Ubuntu 22.04+, Mint 21+, Debian 12, Fedora,
 # Arch...), not only on the builder's. Started by hand (Actions > Linux AppImage > Run workflow, once the file is on the
 # default branch) or by a push to ci/linux-appimage; the AppImage is the run's artifact. No game code or game files: the start screen builds them from the player's own dump.
@@ -32,6 +32,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ZA-Recomp-linux-x86_64
+          name: PokeL-ARecomp-linux-x86_64
           path: build/dist/*.AppImage
           if-no-files-found: error
