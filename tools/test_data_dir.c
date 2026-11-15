@@ -2,9 +2,8 @@
 // tools/test_data_dir.py, which runs it under scratch HOME / XDG_DATA_HOME values and checks that it is PokeL-ARecomp's
 // own folder and that the other recomps' folders next to it (pokev-recomp/, zarecomp/, lasrecomp/) are never touched.
 //   test_data_dir early   -> rt_data_root_early's answer ("none": no session log file - dev mode, or refused)
-//   test_data_dir init    -> rt_paths_init, then rt_data_root() and the working directory
-//   test_data_dir remove  -> rt_paths_init, then rt_game_files_foreign / rt_remove_game_files on <data root>/extracted
-//   test_data_dir mark    -> rt_paths_init, then rt_mark_game_files_ours on <data root>/extracted
+//   test_data_dir init    -> rt_paths_init (exits 1 with a message when it refuses), then rt_data_root() and the cwd
+//   test_data_dir remove  -> rt_paths_init, then rt_game_files_owner / rt_remove_game_files on <data root>/extracted
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,7 +25,7 @@ void rt_fault_report(const char *what, uint64_t a, uint64_t pc, uint64_t lr) {
 const char *rt_host_fn_name(uint64_t pc, uint64_t *offset) { (void)pc, (void)offset; return NULL; }
 
 int main(int argc, char **argv) {
-    if (argc != 2) { fprintf(stderr, "usage: %s early|init|remove|mark\n", argv[0]); return 2; }
+    if (argc != 2) { fprintf(stderr, "usage: %s early|init|remove\n", argv[0]); return 2; }
     if (!strcmp(argv[1], "early")) {
         char root[1100];
         if (!rt_data_root_early(root, sizeof root)) { printf("none\n"); return 0; }  // (dev mode, or refused)
@@ -42,14 +41,9 @@ int main(int argc, char **argv) {
     }
     if (!strcmp(argv[1], "remove")) {
         char what[160] = "";
-        bool foreign = rt_game_files_foreign("extracted", what, sizeof what);
-        bool one = rt_remove_game_file("extracted", "romfs.bin");  // (one entry on its own: guarded too)
+        RtGameOwner o = rt_game_files_owner("extracted", what, sizeof what);
         bool removed = rt_remove_game_files("extracted");
-        printf("%s\nforeign=%d %s\nremoved=%d one=%d\n", rt_data_root(), foreign, what, removed, one);
-        return 0;
-    }
-    if (!strcmp(argv[1], "mark")) {
-        printf("%s\nmarked=%d\n", rt_data_root(), rt_mark_game_files_ours("extracted"));
+        printf("%s\nowner=%d %s\nremoved=%d\n", rt_data_root(), (int)o, what, removed);
         return 0;
     }
     return 2;

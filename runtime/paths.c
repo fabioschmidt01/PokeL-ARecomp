@@ -12,6 +12,8 @@
 #include <windows.h>
 #include <sys/utime.h>
 #else
+#include <fcntl.h>
+#include <sys/file.h>
 #include <sys/statvfs.h>
 #include <utime.h>
 #endif
@@ -220,24 +222,87 @@ static bool pointer_root(const char *home, char *out, size_t n) {
     return true;
 }
 
-// A folder named as the data root by an override (LARECOMP_DATA_ROOT, data_root.txt, dev mode) that is another
-// recomp's: its extracted/ holds that app's game files (runtime/game_identity.h). PokeL-ARecomp won't run there - its
-// settings, logs and caches would land in that app's folder. what: "Pokémon Violet 3.0.1". (The platform's own folder
-// is never refused: Violet's files left in plarecomp/ by PokeV-Recomp v0.0.24 and older are the start screen's to
-// refuse, not a reason not to start.)
-static bool foreign_root(const char *root, char *what, size_t n) {
-    char game[1100];
-    join(game, sizeof game, root, "extracted");
-    return rt_game_files_foreign(game, what, n);
+// ---- other apps' data folders (rt_data_root_foreign). The related recomps share this runtime's file names
+// (larecomp.ini, lasrecomp.log, save/, extracted/), so a folder of theirs used as PokeL-ARecomp's data root would get
+// its saves, settings, logs and game files mixed or overwritten.
+static const struct { const char *dir, *app; } FOREIGN_DIRS[] = {
+    {"lasrecomp", "LAS Recomp"},       {"zarecomp", "ZA Recomp"},     {"pokev-recomp", "PokeV-Recomp"},  // Linux
+    {"LAS Recomp", "LAS Recomp"},      {"ZA Recomp", "ZA Recomp"},    {"PokeV-Recomp", "PokeV-Recomp"},  // data moves
+};
+// (exact case: a checkout called LASRecomp or a folder named "las recomp notes" is not one of them)
+
+// The first line starting with prefix in a file's first 64 KB (false: none, or no file)
+static bool file_line(const char *path, const char *prefix, char *out, size_t n) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+    static char buf[65536];
+    size_t k = fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    buf[k] = 0;
+    size_t pl = strlen(prefix);
+    for (char *l = buf; l && *l; l = strchr(l, '\n') ? strchr(l, '\n') + 1 : NULL)
+        if (!strncmp(l, prefix, pl)) {
+            snprintf(out, n, "%.*s", (int)strcspn(l, "\r\n"), l);
+            return true;
+        }
+    return false;
+}
+
+bool rt_data_root_foreign(const char *root, char *why, size_t n) {
+    char r[1100], line[256], p[1100], what[160];
+    if (!resolve(root, r, sizeof r)) snprintf(r, sizeof r, "%s", root);  // (not there yet: as given)
+    for (const char *c = r; *c;) {  // every path component
+        size_t k = strcspn(c, "/\\");
+        for (size_t i = 0; i < sizeof FOREIGN_DIRS / sizeof *FOREIGN_DIRS; i++)
+            if (k == strlen(FOREIGN_DIRS[i].dir) && !strncmp(c, FOREIGN_DIRS[i].dir, k)) {
+                if (why) snprintf(why, n, "it is %s's data folder (%s)", FOREIGN_DIRS[i].app, FOREIGN_DIRS[i].dir);
+                return true;
+            }
+        c += k;
+        while (*c == '/' || *c == '\\') c++;
+    }
+    join(p, sizeof p, r, "extracted");
+    if (rt_game_files_owner(p, what, sizeof what) == RT_GAME_FOREIGN) {
+        if (why) snprintf(why, n, "it holds %s's game files, from another app", what);
+        return true;
+    }
+    static const char *const OTHERS[] = {"LAS Recomp", "PokeV-Recomp"};  // (not "ZA Recomp": see paths.h)
+    for (int pass = 0; pass < 2; pass++) {  // larecomp.ini's "# <app> settings" line, lasrecomp.log's "[info] <app> v..."
+        join(p, sizeof p, r, pass ? "lasrecomp.log" : "larecomp.ini");
+        if (!file_line(p, pass ? "[info] " : "# ", line, sizeof line)) continue;
+        const char *name = line + (pass ? 7 : 2);
+        for (size_t i = 0; i < sizeof OTHERS / sizeof *OTHERS; i++) {
+            size_t k = strlen(OTHERS[i]);
+            if (!strncmp(name, OTHERS[i], k) && name[k] == ' ') {
+                if (why) snprintf(why, n, "its %s is %s's", pass ? "log (lasrecomp.log)" : "settings file (larecomp.ini)",
+                                  OTHERS[i]);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// The data root's checks apply to every folder but PokeL-ARecomp's own default one (default_home, no
+// LARECOMP_DATA_HOME): that one starts whatever it holds - Violet's files left there by PokeV-Recomp v0.0.24 and older
+// are the setup's to refuse, not a reason not to start.
+static bool own_default(const char *root) {
+    const char *t = getenv("LARECOMP_DATA_HOME");
+    char home[1024];
+    default_home(home, sizeof home);
+    return !(t && *t) && same_dir(root, home);
 }
 
 bool rt_data_root_early(char *out, size_t n) {
     const char *env = getenv("LARECOMP_DATA_ROOT");
-    if (env && *env) return (size_t)snprintf(out, n, "%s", env) < n && !foreign_root(out, NULL, 0);
+    if (env && *env) return (size_t)snprintf(out, n, "%s", env) < n && !rt_data_root_foreign(out, NULL, 0);
     if (is_dir("extracted")) return false;  // (dev mode)
     char home[1024];
     default_home(home, sizeof home);
-    if (!pointer_root(home, out, n) || !is_dir(out) || foreign_root(out, NULL, 0)) snprintf(out, n, "%s", home);
+    if (!pointer_root(home, out, n) || !is_dir(out) || rt_data_root_foreign(out, NULL, 0)) {
+        snprintf(out, n, "%s", home);
+        if (!own_default(home) && rt_data_root_foreign(home, NULL, 0)) return false;  // (LARECOMP_DATA_HOME: refused)
+    }
     return true;
 }
 
@@ -313,7 +378,11 @@ void rt_paths_init(void) {
         snprintf(root, sizeof root, "%s", g_home);
         char ptr[1024];
         while (pointer_root(g_home, ptr, sizeof ptr)) {  // another folder chosen on the start screen
-            if (is_dir(ptr) && writable(ptr)) { snprintf(root, sizeof root, "%s", ptr); break; }
+            // (another app's folder: refused below, before writable() writes its test file in there)
+            if (is_dir(ptr) && (rt_data_root_foreign(ptr, NULL, 0) || writable(ptr))) {
+                snprintf(root, sizeof root, "%s", ptr);
+                break;
+            }
             char msg[1400];
             snprintf(msg, sizeof msg, "PokeL-ARecomp's data folder isn't available:\n%s\n\nIf it's on a drive that isn't "
                      "connected, connect it and try again.", ptr);
@@ -331,14 +400,16 @@ void rt_paths_init(void) {
             }
         }
     }
-    char msg[1400], what[160];
-    if (!same_dir(root, g_home) && foreign_root(root, what, sizeof what)) {  // (before anything is written there)
+    char msg[1400], why[200];
+    if (!own_default(root) && rt_data_root_foreign(root, why, sizeof why)) {  // (before anything is written there)
         char ptr[1100];
         join(ptr, sizeof ptr, g_home, POINTER_FILE);
-        snprintf(msg, sizeof msg, "PokeL-ARecomp won't use this folder as its data folder:\n%s\n\nIt holds %s's game "
-                 "files, from another app, and nothing in it was changed.\n\n%s", root, what,
+        const char *t = getenv("LARECOMP_DATA_HOME");
+        snprintf(msg, sizeof msg, "PokeL-ARecomp won't use this folder as its data folder:\n%s\n\nIt looks like another "
+                 "app's: %s. Nothing in it was changed.\n\n%s", root, why,
                  env && *env ? "Unset LARECOMP_DATA_ROOT, or point it at another folder."
                  : g_dev ? "Start PokeL-ARecomp from another folder (it was started from inside this one)."
+                 : same_dir(root, g_home) && t && *t ? "Unset LARECOMP_DATA_HOME, or point it at another folder."
                          : "Delete data_root.txt in PokeL-ARecomp's own data folder to use that folder again.");
         if (!g_dev && !(env && *env)) fprintf(stderr, "[paths] (data_root.txt: %s)\n", ptr);
         fail(msg);
@@ -357,6 +428,7 @@ void rt_paths_init(void) {
     if (!getcwd(g_root, sizeof g_root)) snprintf(g_root, sizeof g_root, "%s", root);
     fprintf(stderr, "[paths] data: %s\n", g_root);
     if (!g_dev && !(env && *env)) finish_moves(g_root, NULL);
+    rt_game_stage_recover();  // (a setup cut off last time: its staging folder, never extracted/)
     // Pokémon Z-A's release settings (the upscaler, the anti-aliasing, video_recommended = auto...): the app ships them
     // as za-default.ini (tools/za/dist.sh, dist-linux.sh) and a first run copies them into the data folder as the
     // player's larecomp.ini. The release zip no longer holds a larecomp.ini, so unzipping a new version over an install
@@ -391,13 +463,15 @@ bool rt_resource(const char *name, const char *dev_rel, char *out, size_t n) {
 }
 
 // ---- game files
-// What the setup (runtime/ui/launcher.mm) creates in extracted/, plus what older versions' extraction and manual
-// extractions left there (never read at run time).
-// SETUP_MARK last: while it's there, the files are still this app's own copy (rt_game_files_foreign).
-#define SETUP_MARK ".plarecomp_setup"
-static const char *const GAME_FILES[] = {"exefs", "romfs", "romfs.bin", GAMELIB_NAME, GAMELIB_NAME ".id", ".gamebuild",
+// What the setup (runtime/ui/launcher.mm) creates in extracted/ (aoc/ and import.log: a package import's), plus what
+// older versions' extraction and manual extractions left there (never read at run time). exefs last: a delete cut
+// off half way leaves exefs/main, so what is left still reads as ours (rt_game_files_owner) and can be finished.
+static const char *const GAME_FILES[] = {"romfs", "romfs.bin", GAMELIB_NAME, GAMELIB_NAME ".id", ".gamebuild",
                                          ".zigcache", ".extract", "extract.log", "xci_secure", "nso_raw", "update_pfs",
-                                         ".DS_Store", SETUP_MARK};
+                                         "aoc", "import.log", ".DS_Store", "exefs"};
+#define N_GAME_FILES (sizeof GAME_FILES / sizeof *GAME_FILES)
+#define STAGE_DIR ".plarecomp-import"         // in the data root: the setup's staging folder (only this app writes it)
+#define STAGE_LOCK ".plarecomp-import.lock"   // in the data root: locked while a setup runs (rt_game_stage_begin)
 
 // <data root>/extracted with links resolved (false: no data root, or it can't be resolved)
 static bool game_dir_want(char *want, size_t n) {
@@ -421,42 +495,102 @@ static bool game_dir_ok(const char *game_dir) {
     return true;
 }
 
-bool rt_mark_game_files_ours(const char *game_dir) {
-    char p[1100];
-    // (only <data root>/extracted itself, never through a link, and never over files that are already another app's)
-    if (!game_dir_ok(game_dir) || rt_game_files_foreign(game_dir, NULL, 0)) return false;
-    snprintf(p, sizeof p, "%s" SEP SETUP_MARK, game_dir);
-    FILE *f = fopen(p, "wb");
-    if (!f) return false;
-    bool ok = fputs("set up by PokeL-ARecomp\n", f) >= 0;
-    return (fclose(f) == 0) && ok;
+// game_dir is <data root>/extracted, or would be once made: when it isn't there yet, its parent is the data root
+static bool game_dir_target(const char *game_dir) {
+    if (exists(game_dir) || is_link(game_dir)) return game_dir_ok(game_dir);
+    char parent[1100], root[1100], got[1100];
+    snprintf(parent, sizeof parent, "%s", game_dir);
+    char *s = strrchr(parent, '/'), *b = strrchr(parent, '\\');
+    if (b > s) s = b;
+    if (strcmp(s ? s + 1 : parent, "extracted")) return false;
+    if (s) *s = 0;
+    else snprintf(parent, sizeof parent, ".");
+    return g_root[0] && resolve(g_root, root, sizeof root) && resolve(parent[0] ? parent : SEP, got, sizeof got) &&
+           path_eq(root, got);
 }
 
-bool rt_game_files_foreign(const char *game_dir, char *what, size_t n) {
-    char mark[1100], main_path[1100];
+// ---- whose game files (rt_game_files_owner): from what they are, never from a marker or a folder name
+typedef struct {
+    bool ours, foreign, unknown;
+    char what[160];  // the first foreign build, else the first unknown one
+} Owner;
+
+static void owner_note(Owner *o, bool foreign, const char *what) {
+    if (foreign && !o->foreign) snprintf(o->what, sizeof o->what, "%s", what);
+    else if (!foreign && !o->foreign && !o->unknown) snprintf(o->what, sizeof o->what, "%s", what);
+    if (foreign) o->foreign = true;
+    else o->unknown = true;
+}
+
+// One "main" module. exefs/main (required) must be an NSO with a known build; another file called main counts only
+// when it is an NSO (a leftover folder's copy of some game's main).
+static void owner_main(Owner *o, const char *path, bool required) {
     uint8_t id[8];
-    snprintf(mark, sizeof mark, "%s" SEP SETUP_MARK, game_dir);
-    if (exists(mark) && !is_link(mark)) return false;  // (this app's own copy, whatever game it turned out to be)
-    snprintf(main_path, sizeof main_path, "%s" SEP "exefs" SEP "main", game_dir);
-    const GameIdentity *g = game_identity_read(main_path, id) ? game_identity_find(id) : NULL;
-    if (!g || g->supported) return false;
-    if (what && n) snprintf(what, n, "%s %s", g->game, g->version);
-    return true;
+    char magic[4] = {0}, what[160];
+    FILE *f = fopen(path, "rb");
+    bool nso = f && fread(magic, 1, 4, f) == 4 && !memcmp(magic, "NSO0", 4);
+    if (f) fclose(f);
+    if (!nso) {
+        if (required) owner_note(o, false, "an exefs/main that isn't a game program");
+        return;
+    }
+    if (!game_identity_read(path, id)) {
+        owner_note(o, false, "an unreadable exefs/main");
+        return;
+    }
+    const GameIdentity *g = game_identity_find(id);
+    if (g && g->supported) { o->ours = true; return; }
+    game_identity_describe(id, what, sizeof what);
+    owner_note(o, g != NULL, what);
 }
 
-bool rt_remove_game_file(const char *game_dir, const char *name) {
-    bool known = false;
-    for (size_t i = 0; i < sizeof GAME_FILES / sizeof *GAME_FILES; i++) known |= !strcmp(name, GAME_FILES[i]);
-    if (!known || !game_dir_ok(game_dir)) {
-        fprintf(stderr, "[paths] refusing to delete %s/%s (not app-created game files in the data root)\n", game_dir, name);
-        return false;
+// Every NSO called main under dir (links not followed: they are never deleted through either)
+static void owner_tree(Owner *o, const char *dir, int depth) {
+    if (depth > 8) return;
+    DIR *d = opendir(dir);
+    if (!d) return;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        char p[2048];
+        snprintf(p, sizeof p, "%s" SEP "%s", dir, e->d_name);
+        if (is_link(p)) continue;
+        if (is_dir(p)) owner_tree(o, p, depth + 1);
+        else if (!strcmp(e->d_name, "main")) owner_main(o, p, false);
     }
-    char what[160];
-    if (rt_game_files_foreign(game_dir, what, sizeof what)) {  // (another app's: see rt_remove_game_files)
-        fprintf(stderr, "[paths] refusing to delete %s/%s: the game files there are %s, another app's\n", game_dir,
-                name, what);
-        return false;
+    closedir(d);
+}
+
+RtGameOwner rt_game_files_owner(const char *game_dir, char *what, size_t n) {
+    Owner o = {0};
+    bool any = false;
+    for (size_t i = 0; i < N_GAME_FILES; i++) {
+        const char *name = GAME_FILES[i];
+        char p[1100];
+        snprintf(p, sizeof p, "%s" SEP "%s", game_dir, name);
+        if (!exists(p) && !is_link(p)) continue;
+        if (!strcmp(name, ".DS_Store")) continue;  // (a file manager's, not a game file)
+        any = true;
+        if (!strcmp(name, "exefs")) {
+            char m[1100];
+            snprintf(m, sizeof m, "%s" SEP "main", p);
+            if (is_link(p) || is_link(m)) owner_note(&o, false, "a linked exefs/main");
+            else if (!exists(m)) owner_note(&o, false, "game files without an exefs/main");
+            else owner_main(&o, m, true);
+        } else if (is_dir(p) && !is_link(p) && strcmp(name, "romfs") && strcmp(name, ".gamebuild") &&
+                   strcmp(name, ".zigcache") && strcmp(name, "aoc"))
+            owner_tree(&o, p, 1);  // (leftover folders: nso_raw/, update_pfs/, .extract/... - not the game's data)
     }
+    RtGameOwner r = !any ? RT_GAME_NONE : o.foreign ? RT_GAME_FOREIGN : o.unknown ? RT_GAME_UNKNOWN
+                  : o.ours ? RT_GAME_OURS : RT_GAME_UNKNOWN;
+    if (r == RT_GAME_UNKNOWN && !o.unknown) snprintf(o.what, sizeof o.what, "game files without an exefs/main");
+    if (what && n) snprintf(what, n, "%s", r == RT_GAME_OURS ? "Pok\xc3\xa9mon Legends: Arceus 1.1.1" : o.what);
+    return r;
+}
+
+// ---- deleting game files
+// One entry of game_dir (already checked: <data root>/extracted, our files): never a link, never outside game_dir
+static bool remove_entry(const char *game_dir, const char *name) {
     char p[1100];
     snprintf(p, sizeof p, "%s" SEP "%s", game_dir, name);
     if (!exists(p) && !is_link(p)) return true;
@@ -475,25 +609,245 @@ bool rt_remove_game_file(const char *game_dir, const char *name) {
     return is_dir(p) ? plat_remove_tree(p) : remove(p) == 0;  // (plat_remove_tree doesn't follow links inside)
 }
 
-bool rt_remove_game_files(const char *game_dir) {
+// game_dir is ours to delete in: <data root>/extracted, holding Legends: Arceus 1.1.1's files only (or none).
+// Another game's build (Violet, Z-A, Link's Awakening) or files that can't be identified are refused, whatever else
+// is in there: they may be another recomp's (its folder used as this app's data root, or Violet's from PokeV-Recomp
+// v0.0.24 and older, which set Violet up in plarecomp/).
+static bool ours_to_delete(const char *game_dir, const char *what_for) {
     if (!game_dir_ok(game_dir)) {
-        fprintf(stderr, "[paths] refusing to delete game files in %s (not <data root>/extracted)\n", game_dir);
+        fprintf(stderr, "[paths] refusing to delete %s in %s (not <data root>/extracted)\n", what_for, game_dir);
         return false;
     }
-    // Another recomp's game files (Violet, Z-A, Link's Awakening: runtime/game_identity.h) are never ours to delete.
-    // They get here when the data root is that app's folder (LARECOMP_DATA_ROOT, a data_root.txt, or started from
-    // inside it - dev mode), or when PokeV-Recomp v0.0.24 and older set Violet up in plarecomp/: setting up or "Delete
-    // the game files" would wipe them. Legends: Arceus's own files and unknown builds (an interrupted or
-    // wrong-version setup's) are removed as before.
     char what[160];
-    if (rt_game_files_foreign(game_dir, what, sizeof what)) {
-        fprintf(stderr, "[paths] refusing to delete game files in %s: they are %s's, another app's\n", game_dir, what);
+    RtGameOwner o = rt_game_files_owner(game_dir, what, sizeof what);
+    if (o == RT_GAME_FOREIGN || o == RT_GAME_UNKNOWN) {
+        fprintf(stderr, "[paths] refusing to delete %s in %s: the game files there are %s (%s)\n", what_for, game_dir,
+                what, o == RT_GAME_FOREIGN ? "another app's" : "not identified");
         return false;
     }
+    return true;
+}
+
+static bool known_game_file(const char *name) {
+    for (size_t i = 0; i < N_GAME_FILES; i++)
+        if (!strcmp(name, GAME_FILES[i])) return true;
+    return false;
+}
+
+bool rt_remove_game_file(const char *game_dir, const char *name) {
+    if (!known_game_file(name)) {
+        fprintf(stderr, "[paths] refusing to delete %s/%s (not app-created game files in the data root)\n", game_dir, name);
+        return false;
+    }
+    return ours_to_delete(game_dir, name) && remove_entry(game_dir, name);
+}
+
+bool rt_remove_game_files(const char *game_dir) {
+    if (!ours_to_delete(game_dir, "the game files")) return false;
     bool ok = true;
-    for (size_t i = 0; i < sizeof GAME_FILES / sizeof *GAME_FILES; i++) ok &= rt_remove_game_file(game_dir, GAME_FILES[i]);
+    for (size_t i = 0; i < N_GAME_FILES; i++) ok &= remove_entry(game_dir, GAME_FILES[i]);  // (exefs last)
     rmdir(game_dir);  // only if empty: anything else in there stays
     return ok;
+}
+
+// ---- setting the game files up: staged, checked, then moved into place (paths.h)
+static char g_stage[1100];  // the staging folder of the setup in progress ("" = none)
+#ifdef _WIN32
+static HANDLE g_stage_lock = INVALID_HANDLE_VALUE;
+static bool stage_lock(void) {
+    char p[1100];
+    if (g_stage_lock != INVALID_HANDLE_VALUE || !g_root[0]) return false;
+    join(p, sizeof p, g_root, STAGE_LOCK);
+    HANDLE h = CreateFileA(p, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                           OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    OVERLAPPED ov;
+    memset(&ov, 0, sizeof ov);
+    if (!LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &ov)) {
+        CloseHandle(h);
+        return false;
+    }
+    g_stage_lock = h;
+    return true;
+}
+static void stage_unlock(void) {
+    if (g_stage_lock != INVALID_HANDLE_VALUE) CloseHandle(g_stage_lock), g_stage_lock = INVALID_HANDLE_VALUE;
+}
+#else
+static int g_stage_lock = -1;
+static bool stage_lock(void) {  // (flock: released by the system when the process ends, however it ends)
+    char p[1100];
+    if (g_stage_lock >= 0 || !g_root[0]) return false;
+    join(p, sizeof p, g_root, STAGE_LOCK);
+    int fd = open(p, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0644);
+    if (fd < 0) return false;
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        close(fd);
+        return false;
+    }
+    g_stage_lock = fd;
+    return true;
+}
+static void stage_unlock(void) {
+    if (g_stage_lock >= 0) close(g_stage_lock), g_stage_lock = -1;
+}
+#endif
+
+// <data root>/.plarecomp-import (false: no data root)
+static bool stage_path(char *out, size_t n) {
+    char root[1100];
+    return g_root[0] && resolve(g_root, root, sizeof root) && (size_t)snprintf(out, n, "%s" SEP STAGE_DIR, root) < n;
+}
+
+// The staging folder removed (with the setup lock held): a link there goes, never what it points to
+static bool stage_remove(const char *stage) {
+    if (is_link(stage)) {
+#ifdef _WIN32
+        if (is_dir(stage)) return RemoveDirectoryA(stage) != 0;  // (a junction)
+#endif
+        return remove(stage) == 0;
+    }
+    if (!exists(stage)) return true;
+    fprintf(stderr, "[paths] removing the setup's staging folder %s\n", stage);
+    return is_dir(stage) ? plat_remove_tree(stage) : remove(stage) == 0;
+}
+
+// game_dir holds nothing but game-file entries (and file managers' leftovers): what a setup may replace whole.
+// other: the first entry that isn't one (the player's own file, say), for the message.
+static bool only_game_files(const char *game_dir, char *other, size_t n) {
+    DIR *d = opendir(game_dir);
+    if (!d) return true;
+    struct dirent *e;
+    bool only = true;
+    while (only && (e = readdir(d))) {
+        const char *x = e->d_name;
+        if (!strcmp(x, ".") || !strcmp(x, "..") || !strcmp(x, "Thumbs.db") || !strcmp(x, "desktop.ini")) continue;
+        bool known = false;
+        for (size_t i = 0; i < N_GAME_FILES; i++) known |= !strcmp(x, GAME_FILES[i]);
+        if (!known) only = false, snprintf(other, n, "%s", x);
+    }
+    closedir(d);
+    return only;
+}
+
+static void owner_refusal(RtGameOwner o, const char *what, char *err, size_t n) {
+    if (o == RT_GAME_FOREIGN)
+        snprintf(err, n, "The data folder's extracted folder holds %s's files, from another app: they are left as they "
+                 "are. Move the extracted folder out of the data folder yourself, then set the game up again.", what);
+    else
+        snprintf(err, n, "The data folder's extracted folder holds game files PokeL-ARecomp can't identify (%s): they "
+                 "are left as they are. Move the extracted folder out of the data folder yourself, then set the game up "
+                 "again.", what);
+}
+
+bool rt_game_stage_begin(const char *game_dir, char *stage, size_t n, char *err, size_t errn) {
+    char what[160];
+    if (errn) err[0] = 0;
+    if (!game_dir_target(game_dir)) {
+        snprintf(err, errn, "%s isn't the data folder's extracted folder: PokeL-ARecomp only sets the game up there.",
+                 game_dir);
+        return false;
+    }
+    RtGameOwner o = rt_game_files_owner(game_dir, what, sizeof what);
+    if (o == RT_GAME_FOREIGN || o == RT_GAME_UNKNOWN) {
+        owner_refusal(o, what, err, errn);
+        return false;
+    }
+    char other[256];
+    if (!only_game_files(game_dir, other, sizeof other)) {
+        snprintf(err, errn, "%s holds \"%s\", which isn't a game file: move it out, then set the game up again.", game_dir,
+                 other);
+        return false;
+    }
+    if (!stage_lock()) {
+        snprintf(err, errn, "Another copy of PokeL-ARecomp is setting the game up in this data folder.");
+        return false;
+    }
+    if (!stage_path(stage, n) || !stage_remove(stage) || mkdir(stage, 0755) != 0 || is_link(stage) || !is_dir(stage)) {
+        snprintf(err, errn, "Couldn't make the setup's folder in the data folder (%s).", strerror(errno));
+        stage_unlock();
+        return false;
+    }
+    snprintf(g_stage, sizeof g_stage, "%s", stage);
+    fprintf(stderr, "[paths] setup: staging in %s\n", stage);
+    return true;
+}
+
+void rt_game_stage_abort(void) {
+    if (g_stage[0]) stage_remove(g_stage);
+    g_stage[0] = 0;
+    stage_unlock();
+}
+
+bool rt_game_stage_commit(const char *game_dir, const char *stage, char *err, size_t errn) {
+    char what[160], p[1100];
+    if (errn) err[0] = 0;
+    if (!g_stage[0] || !path_eq(stage, g_stage) || is_link(stage) || !is_dir(stage)) {
+        snprintf(err, errn, "The setup's folder changed while it ran.");
+        rt_game_stage_abort();
+        return false;
+    }
+    RtGameOwner o = rt_game_files_owner(stage, what, sizeof what);
+    if (o != RT_GAME_OURS) {  // (the start screen says which game it was before getting here; this is the last word)
+        snprintf(err, errn, o == RT_GAME_NONE ? "No game files came out of the setup." : "These files are %s.", what);
+        rt_game_stage_abort();
+        return false;
+    }
+    char romfs[1100];
+    join(p, sizeof p, stage, "romfs.bin");
+    join(romfs, sizeof romfs, stage, "romfs");
+    if (!exists(p) && !is_dir(romfs)) {
+        snprintf(err, errn, "The game's data (romfs) is missing from what was set up.");
+        rt_game_stage_abort();
+        return false;
+    }
+    // extracted/ again: anything may have changed there while the files were read (another app, the player)
+    if (!game_dir_target(game_dir) ||
+        ((o = rt_game_files_owner(game_dir, what, sizeof what)) == RT_GAME_FOREIGN || o == RT_GAME_UNKNOWN)) {
+        if (o == RT_GAME_FOREIGN || o == RT_GAME_UNKNOWN) owner_refusal(o, what, err, errn);
+        else snprintf(err, errn, "%s isn't the data folder's extracted folder any more.", game_dir);
+        rt_game_stage_abort();
+        return false;
+    }
+    char other[256];
+    if (!only_game_files(game_dir, other, sizeof other)) {  // (checked before anything is removed)
+        snprintf(err, errn, "%s holds \"%s\", which isn't a game file: move it out, then set the game up again.", game_dir,
+                 other);
+        rt_game_stage_abort();
+        return false;
+    }
+    if ((exists(game_dir) || is_link(game_dir)) && !rt_remove_game_files(game_dir)) {
+        snprintf(err, errn, "Couldn't remove the previous game files from %s.", game_dir);
+        rt_game_stage_abort();
+        return false;
+    }
+    if (exists(game_dir) || is_link(game_dir)) {
+        snprintf(err, errn, "%s still holds files that aren't game files: move them out, then set the game up again.",
+                 game_dir);
+        rt_game_stage_abort();
+        return false;
+    }
+    if (rename(stage, game_dir) != 0) {  // (same folder, same drive: one step)
+        snprintf(err, errn, "Couldn't move the new game files into %s (%s).", game_dir, strerror(errno));
+        rt_game_stage_abort();
+        return false;
+    }
+    fprintf(stderr, "[paths] setup: %s in place\n", game_dir);
+    g_stage[0] = 0;
+    stage_unlock();
+    return true;
+}
+
+void rt_game_stage_recover(void) {
+    char stage[1100];
+    if (!stage_path(stage, sizeof stage) || (!exists(stage) && !is_link(stage))) return;
+    if (!stage_lock()) {  // (another copy of the app is setting up right now: its folder)
+        fprintf(stderr, "[paths] %s: a setup is running in another copy of PokeL-ARecomp - left as it is\n", stage);
+        return;
+    }
+    fprintf(stderr, "[paths] a setup was cut off: its staging folder goes (extracted/ is left as it is)\n");
+    stage_remove(stage);
+    stage_unlock();
 }
 
 #ifdef _WIN32
@@ -533,7 +887,7 @@ unsigned long long rt_tree_size(const char *path) { return tree_size(path); }
 unsigned long long rt_game_files_size(const char *game_dir) {
     unsigned long long n = 0;
     char p[1100];
-    for (size_t i = 0; i < sizeof GAME_FILES / sizeof *GAME_FILES; i++) {
+    for (size_t i = 0; i < N_GAME_FILES; i++) {
         snprintf(p, sizeof p, "%s" SEP "%s", game_dir, GAME_FILES[i]);
         n += tree_size(p);
     }
@@ -622,6 +976,7 @@ void rt_data_target(const char *picked, RtDataTarget *t) {
     else if (within(t->path, root)) snprintf(t->refuse, sizeof t->refuse, "That folder is inside the data folder.");
     else if (within(root, t->path)) snprintf(t->refuse, sizeof t->refuse, "That folder holds the data folder.");
     else if (in_app(r)) snprintf(t->refuse, sizeof t->refuse, "That folder is inside the app.");
+    else if (rt_data_root_foreign(t->path, NULL, 0)) snprintf(t->refuse, sizeof t->refuse, "That folder is another app's.");
     else if (!writable(r)) snprintf(t->refuse, sizeof t->refuse, "PokeL-ARecomp can't write to that folder.");
     else if (!same_dir(t->path, g_home) && !usable_dir(t->path))
         snprintf(t->refuse, sizeof t->refuse, "Choose an empty folder.");

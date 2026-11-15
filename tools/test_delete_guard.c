@@ -42,6 +42,18 @@ static void put(const char *p) {
     fclose(f);
 }
 static void dir(const char *p) { mkdir(p, 0755); }
+// exefs/main of Pokémon Legends: Arceus 1.1.1 (only the NSO magic and the build ID at 0x40: runtime/game_identity.h).
+// Files that can't be identified are never deleted (runtime/paths.c rt_game_files_owner), so the app's own setup
+// has to be Arceus's here.
+static void put_arceus_main(const char *p) {
+    unsigned char b[0x80] = {'N', 'S', 'O', '0'};
+    static const unsigned char id[8] = {0xae, 0xe8, 0xf1, 0x50, 0xdd, 0xa1, 0xb5, 0xa8};
+    memcpy(b + 0x40, id, 8);
+    FILE *f = fopen(p, "wb");
+    if (!f) { fprintf(stderr, "can't write %s\n", p); exit(2); }
+    fwrite(b, 1, sizeof b, f);
+    fclose(f);
+}
 
 // A folder link (POSIX symlink; Windows junction, which needs no privilege)
 static bool link_dir(const char *target, const char *link) {
@@ -64,7 +76,7 @@ static void fake_game_files(const char *d) {
     char p[1100];
     dir(d);
     snprintf(p, sizeof p, "%s/exefs", d), dir(p);
-    snprintf(p, sizeof p, "%s/exefs/main", d), put(p);
+    snprintf(p, sizeof p, "%s/exefs/main", d), put_arceus_main(p);
     snprintf(p, sizeof p, "%s/romfs", d), dir(p);
     snprintf(p, sizeof p, "%s/romfs/data.bin", d), put(p);
     snprintf(p, sizeof p, "%s/romfs.bin", d), put(p);
@@ -109,7 +121,7 @@ int main(int argc, char **argv) {
     dir("extracted");
     CHECK(link_dir("../other/romfs", "extracted/romfs"));
     dir("extracted/exefs");
-    put("extracted/exefs/main");
+    put_arceus_main("extracted/exefs/main");
     CHECK(link_dir("../other/keep", "extracted/exefs/inner"));
     CHECK(!rt_remove_game_file("extracted", "romfs"));  // (a link: refused)
     CHECK(there("../other/romfs/data.bin"));

@@ -1,8 +1,15 @@
 """Game identity (runtime/game_identity.h): only Pokémon Legends: Arceus 1.1.1 is accepted for setup and compilation;
-Violet, Z-A and Link's Awakening files are refused by name. Also checks that the start screen and main.c take their
-answer from that header (no build table of their own), that the supported build agrees with the generator's
-(tools/pla_patches.py PLA_BUILDS), and that every compilation and every setup deletion is preceded by the identity
-checks. Fake NSO headers in a scratch folder; no game files used."""
+Violet, Z-A and Link's Awakening (1.0.0, 1.0.1 / 1.1.0) are refused by name, unknown builds refused.
+
+1. tools/test_game_identity.c, built as C and C++ (-Wall -Werror), reads synthetic NSO headers with the header's real
+   functions (behaviour).
+2. Every build ID in the table is checked against the project's own sources, so none can be mistyped or made up:
+   PLA_BUILDS (tools/pla_patches.py), ZA_BUILDS (tools/za_patches.py), GA_VERSION (runtime/game_addresses/versions.h,
+   Link's Awakening, as in LAS Recomp). Violet's comes from PokeV-Recomp (tools/sv_patches.py SV_BUILDS), not in this
+   repository: it is pinned here with that source.
+3. Structural checks on the source (not behaviour - tools/test_game_files.py runs that): the start screen and main.c
+   keep no build table of their own, and the setup goes through the staging transaction.
+Fake NSO headers in a scratch folder; no game files used."""
 import ast
 import os
 from pathlib import Path
@@ -25,43 +32,47 @@ with tempfile.TemporaryDirectory() as directory:
         print(run.stderr + run.stdout, end='')
         assert run.returncode == 0 and 'all checks passed' in run.stdout, f'game identity test failed ({std})'
 
-# The supported build must be the generator's (tools/pla_patches.py PLA_BUILDS: what gen.py patches as Arceus)
-pla = (ROOT / 'tools/pla_patches.py').read_text()
+# 2. the table against the project's own sources
 header = (ROOT / 'runtime/game_identity.h').read_text()
-supported = re.findall(r'\{\{([^}]*)\}, "([^"]*)", "([^"]*)", true\}', header)
-assert len(supported) == 1, f'one supported build expected in game_identity.h, found {supported}'
-ids, game, version = supported[0]
-arceus = ''.join(b.strip()[2:] for b in ids.split(','))
-m = re.search(r'^PLA_BUILDS = (\{[^}]*\})', pla, re.M)
-assert m, 'PLA_BUILDS not found in tools/pla_patches.py'
-assert ast.literal_eval(m.group(1)) == {arceus: version}, f'{arceus} {version} is not tools/pla_patches.py PLA_BUILDS'
-assert game == 'Pok\\xc3\\xa9mon Legends: Arceus', game
+rows = [(''.join(b.strip()[2:] for b in ids.split(',')), game, version, supported == 'true')
+        for ids, game, version, supported in
+        re.findall(r'\{\{([^}]*)\}, "([^"]*)", "([^"]*)", (true|false)\}', header)]
+table = {r[0]: r for r in rows}
+assert len(table) == len(rows), 'a build ID is listed twice in game_identity.h'
 
-# The start screen and main.c take the answer from the header: no build table of their own that could let another
-# game's files through again (until v0.26.7 the start screen accepted Link's Awakening and Z-A builds as set up)
+
+def literal(path, name):
+    m = re.search(rf'^{name} = (\{{[^}}]*\}})', (ROOT / path).read_text(), re.M)
+    assert m, f'{name} not found in {path}'
+    return ast.literal_eval(re.sub(r'#[^\n]*', '', m.group(1)))
+
+
+pla = literal('tools/pla_patches.py', 'PLA_BUILDS')
+za = literal('tools/za_patches.py', 'ZA_BUILDS')
+la = {m.group(2).lower()[:16]: m.group(1) for m in
+      re.finditer(r'GA_VERSION\(\w+,\s*"([^"]+)",\s*"([0-9A-Fa-f]+)"\)', (ROOT / 'runtime/game_addresses/versions.h').read_text())}
+violet = {'709bfd6611529864': '4.0.0'}  # (PokeV-Recomp tools/sv_patches.py SV_BUILDS; 4.0.0 since its bb9f414)
+assert [r for r in rows if r[3]] == [(k, 'Pok\\xc3\\xa9mon Legends: Arceus', v, True) for k, v in pla.items()], \
+    'the one supported build must be tools/pla_patches.py PLA_BUILDS'
+want = {**{k: ('Pok\\xc3\\xa9mon Legends: Z-A', None) for k in za},
+        **{k: ("The Legend of Zelda: Link's Awakening", v) for k, v in la.items()},
+        **{k: ('Pok\\xc3\\xa9mon Violet', v) for k, v in violet.items()}}
+foreign = {k: (g, v) for k, g, v, s in rows if not s}
+assert set(foreign) == set(want), f'refused builds differ from the sources: {set(foreign) ^ set(want)}'
+for k, (game, version) in want.items():
+    assert foreign[k][0] == game and (version is None or foreign[k][1] == version), (k, foreign[k], game, version)
+print(f'table: {len(rows)} builds, each one from the project\'s sources (PLA_BUILDS, ZA_BUILDS, versions.h, SV_BUILDS)')
+
+# 3. structural: no second table, and the setup goes through the staging transaction (never straight into extracted/)
 launcher = (ROOT / 'runtime/ui/launcher.mm').read_text()
 main = (ROOT / 'runtime/main.c').read_text()
-assert 'return game_identity_supported(id);' in launcher
-assert 'game_identity_supported(id)' in main
+assert 'return game_identity_supported(id);' in launcher and 'game_identity_supported(id)' in main
 for src, name in ((launcher, 'launcher.mm'), (main, 'main.c')):
-    for other in ('0xae, 0xe8, 0xf1, 0x50', '0x72, 0x22, 0xe1, 0x3e', '0x8a, 0x1c, 0x86, 0xc4', '0xb1, 0xf1, 0x2f, 0xd9',
-                  '0xae, 0x16, 0xf7, 0x1e', '0x70, 0x9b, 0xfd, 0x66'):
-        assert other not in src, f'{name} still lists a build id of its own ({other})'
-
-# Every compilation goes through build_game_code, which checks the identity before gamebuild_run
-assert launcher.count('gamebuild_run(') == 1, 'gamebuild_run has more than one caller in launcher.mm'
-callers = [p for p in (ROOT / 'runtime').rglob('*') if p.suffix in ('.c', '.mm', '.cpp') and p.name != 'gamebuild.c'
-           and 'gamebuild_run(' in p.read_text(errors='replace')]
-assert [p.name for p in callers] == ['launcher.mm'], callers
-body = launcher[launcher.index('static bool build_game_code(void)'):]
-assert body.index('build_id_ok(g_root + "/exefs/main")') < body.index('gamebuild_run('), \
-    'build_game_code must check the identity before gamebuild_run'
-
-# The setup thread refuses another app's files before it deletes, imports over or compiles anything
+    for k in table:
+        assert ', '.join(f'0x{k[i:i + 2]}' for i in range(0, 8, 2)) not in src, f'{name} lists a build id itself ({k})'
 setup = launcher[launcher.index('static void *extract_thread(void *)'):]
 setup = setup[:setup.index('\ncheck:')]
-guard = setup.index('rt_game_files_foreign(g_root.c_str()')
-for what in ('rt_remove_game_files(', 'build_game_code()', 'import_packages('):
-    assert guard < setup.index(what), f'extract_thread: {what} before the foreign-files check'
-print('only Pokémon Legends: Arceus 1.1.1 is set up and compiled; Violet / Z-A / Link\'s Awakening files are refused '
-      'by name, before any delete or compile')
+assert 'rt_remove_game_files(' not in setup and 'rt_mark_game_files_ours' not in launcher, 'setup must not delete itself'
+assert setup.index('rt_game_stage_begin(') < setup.index('import_packages(') < setup.index('stage_commit(stage)')
+assert 'remove(lib' not in launcher, '"Recompile game" must delete through rt_remove_game_file'
+print('only Pokémon Legends: Arceus 1.1.1 is set up and compiled; Violet / Z-A / Link\'s Awakening are refused by name')

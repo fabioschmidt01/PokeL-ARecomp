@@ -19,6 +19,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 BRIDGE = r'''
 #include "platform.h"
+#include "paths.h"
 #include <chrono>
 #include <thread>
 #include <filesystem>
@@ -36,6 +37,9 @@ extern "C" bool rt_resource(const char *,const char *dev,char *out,size_t n) {
     return std::filesystem::exists(std::filesystem::u8path(p)) && snprintf(out,n,"%s",p.c_str())<(int)n;
 }
 extern "C" bool rt_dev_mode() { return false; }
+extern "C" bool gamelib_old_cpu() { return false; }  // (runtime/gamelib.c's CPU check)
+// (runtime/paths.c's: the fixture is the app's own Arceus files. tools/test_game_files.py runs the real one)
+extern "C" RtGameOwner rt_game_files_owner(const char *, char *w, size_t n) { if (n) snprintf(w, n, "fixture"); return RT_GAME_OURS; }
 extern "C" uint64_t plat_now_ns() { return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 extern "C" void plat_sleep_until_ns(uint64_t t) { auto now=plat_now_ns(); if(t>now)std::this_thread::sleep_for(std::chrono::nanoseconds(t-now)); }
 extern "C" intptr_t plat_spawn(const char *const *a,const char *l,bool append) { return start_cb(a,l,append); }
@@ -64,7 +68,8 @@ with tempfile.TemporaryDirectory() as temporary:
         (resources/'runtime'/name).write_text('/* fixture header */\n')
     (resources/'tools/gamelib_entry.c').write_text('int cache_entry(void) { return 0; }\n')
     (resources/'runtime/hle/hle_symbols.txt').write_text('fixture\n')
-    main = b'NSO0' + bytes(0x3c) + bytes.fromhex('0123456789abcdef') + bytes(0x18) + b'fixture main'  # (the build ID: the library id)
+    # (the build ID: the library id. Legends: Arceus 1.1.1's - gamebuild_run compiles nothing else, runtime/game_identity.h)
+    main = b'NSO0' + bytes(0x3c) + bytes.fromhex('aee8f150dda1b5a8') + bytes(0x18) + b'fixture main'
     (game/'exefs/main').write_bytes(main)
     (game/'exefs/sdk').write_bytes(b'fixture sdk')
     generator = tmp/'generator.py'; generator.write_text(GENERATOR)

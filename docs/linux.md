@@ -156,9 +156,13 @@ Switches: `LARECOMP_VK_CS_SUBGROUP=0` leaves compute to the driver's 64-lane wav
 > PokeL-ARecomp's AppImage is built by `tools/za/dist-linux.sh` below. Its data folder is
 > `~/.local/share/plarecomp` (`$XDG_DATA_HOME/plarecomp` when `XDG_DATA_HOME` is an absolute path), separate from LAS
 > Recomp's `lasrecomp/`, ZA Recomp's `zarecomp/` and PokeV-Recomp's `pokev-recomp/`; nothing is moved or migrated
-> between them. The start screen only sets up and compiles Pokémon Legends: Arceus 1.1.1 (build `aee8f150dda1b5a8`):
-> other games' files are refused by name, and game files another app set up (e.g. Pokémon Violet's, written into
-> `plarecomp/` by PokeV-Recomp v0.0.24 and older) are never deleted, imported over or compiled - move them out by hand.
+> between them, and another app's folder is never used as the data root (`LARECOMP_DATA_ROOT`, `data_root.txt`, dev
+> mode): it is recognised by its name, another game's files in its `extracted/`, or its settings / log, and refused
+> before anything is written there. The start screen only sets up and compiles Pokémon Legends: Arceus 1.1.1 (build
+> `aee8f150dda1b5a8`). Setup reads your files into `.plarecomp-import/` in the data folder, checks them, and only then
+> replaces `extracted/`; a setup cut off half way leaves only that folder, removed at the next start. Files in
+> `extracted/` that are another game's (e.g. Pokémon Violet's, written into `plarecomp/` by PokeV-Recomp v0.0.24 and
+> older) or that can't be identified are never deleted, set up over or compiled - move them out by hand.
 > The rest of this section is the Z-A port's history, which PokeL-ARecomp's Linux build comes from.
 
 Experimental. ZA Recomp builds and runs natively on Linux x86-64 (no Wine / Proton) and can be packaged as an

@@ -111,12 +111,27 @@ the native compiler (defaults: `clang` / `clang++`). For a release smoke test,
 cancel a real game-code build after some objects finish, resume it, inspect the
 reused/compiled counts in the log, and launch the resulting game library.
 
-Game identity and data folder tests use synthetic NSO headers and scratch folders, never your own game files or saves:
-`python tools/test_game_identity.py` (only Pokémon Legends: Arceus 1.1.1 is set up and compiled; other games' builds
-are refused by name) and, on Linux, `python tools/test_data_dir.py` (the data folder is `plarecomp/`, other recomps'
-folders stay byte for byte unchanged, and their game files are never deleted). `tools/test_data_dir.py`,
-`tools/test_delete_guard.py` and `tools/test_data_move.py` link SDL3: `DEPS=build/linux/x86_64/deps` after
-`tools/za/build-linux.sh`, or a system SDL3 found by `pkg-config`.
+Game identity, game files and data folder tests use synthetic NSO headers and scratch folders, never your own game
+files, keys or saves:
+
+- `python tools/test_game_identity.py`: only Pokémon Legends: Arceus 1.1.1 is accepted; every other build in
+  `runtime/game_identity.h` is checked against the project's own tables (`PLA_BUILDS`, `ZA_BUILDS`,
+  `runtime/game_addresses/versions.h`) and refused by name.
+- `python tools/test_game_files.py` (Linux / macOS): another game's files, unknown builds and mixed folders are never
+  deleted, set up over or compiled; a setup is staged in `.plarecomp-import/`, checked, then moved into `extracted/`;
+  a cut-off setup leaves only that staging folder, removed at the next start. Runs the real `paths.c` and
+  `gamebuild.c`.
+- `python tools/test_data_dir.py` (Linux): the data folder is `plarecomp/`; another app's folder (by name, game
+  files, settings or log) is refused as the data root however it is named - `LARECOMP_DATA_ROOT`,
+  `LARECOMP_DATA_HOME`, `data_root.txt`, dev mode - and stays byte for byte unchanged.
+- `python tools/test_delete_guard.py` and `python tools/test_data_move.py`: links and folders outside the data root are
+  never deleted through; data moves never lose data.
+
+The ones that build `paths.c` link SDL3: `DEPS=build/linux/x86_64/deps` after `tools/za/build-linux.sh` (or a system
+SDL3 found by `pkg-config`). In `tools/linux/Containerfile`'s image, from the repository root:
+
+    podman run --rm --userns=keep-id -v "$PWD:/src:Z" -w /src -e DEPS=/src/build/linux/x86_64/deps \
+        <image> python3 tools/test_game_files.py
 
 ## Code style
 

@@ -388,6 +388,17 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         snprintf(why, why_size, "the game files' exefs/main is missing or unreadable");
         return false;
     }
+    {   // Only our own files are compiled: Pokémon Legends: Arceus 1.1.1, and no other game's build anywhere among them
+        // (runtime/paths.c rt_game_files_owner, runtime/game_identity.h). Every caller checks first; this is here so
+        // that no caller can skip it - another game's lasgame.so is never written over.
+        char what[160];
+        RtGameOwner own = rt_game_files_owner(game_dir, what, sizeof what);
+        if (own != RT_GAME_OURS) {
+            snprintf(why, why_size, "these game files are %s, not Pok\xc3\xa9mon Legends: Arceus 1.1.1: not compiled",
+                     own == RT_GAME_NONE ? "missing" : what);
+            return false;
+        }
+    }
     Tools t;
     if (!find_tools(&t)) {
         snprintf(why, why_size, "the game code builder is missing from this copy of PokeL-ARecomp");

@@ -481,7 +481,29 @@ static std::string build_id_detail(const std::string &main_path) {
     char what[128];
     game_identity_describe(id, what, sizeof what);
     fprintf(stderr, "[launcher] %s: %s, not Pok\xc3\xa9mon Legends: Arceus 1.1.1 - refused\n", main_path.c_str(), what);
-    return std::string(TR("These files are ", "Esses arquivos s\xc3\xa3o de ")) + what + ".";
+    return std::string(TR("These files are ", "Esses arquivos s\xc3\xa3o: ")) + what + ".";
+}
+
+// extracted/ holds files that aren't ours to set up over, compile or delete (runtime/paths.c rt_game_files_owner,
+// from what they are): the failure panel's text. false: they are ours (or there are none).
+static bool game_files_refused(std::string &detail) {
+    char what[160];
+    RtGameOwner own = rt_game_files_owner(g_root.c_str(), what, sizeof what);
+    if (own != RT_GAME_FOREIGN && own != RT_GAME_UNKNOWN) return false;
+    fprintf(stderr, "[launcher] %s holds %s (%s): not set up over, compiled or deleted\n", g_root.c_str(), what,
+            own == RT_GAME_FOREIGN ? "another app's" : "not identified");
+    if (own == RT_GAME_FOREIGN)
+        detail = std::string(TR("The data folder holds ", "A pasta de dados tem os arquivos de ")) + what +
+                 TR("'s files, from another app: they are left as they are. Move the extracted folder out of the data "
+                    "folder yourself, then set the game up again.", ", de outro programa: eles ficam como est\xc3\xa3o. "
+                    "Tire a pasta extracted da pasta de dados voc\xc3\xaa mesmo e prepare o jogo de novo.");
+    else
+        detail = std::string(TR("The data folder holds game files PokeL-ARecomp can't identify (",
+                                "A pasta de dados tem arquivos de jogo que o PokeL-ARecomp n\xc3\xa3o reconhece (")) +
+                 what + TR("): they are left as they are. Move the extracted folder out of the data folder yourself, "
+                           "then set the game up again.", "): eles ficam como est\xc3\xa3o. Tire a pasta extracted da "
+                           "pasta de dados voc\xc3\xaa mesmo e prepare o jogo de novo.");
+    return true;
 }
 
 // ------------------------------------------------------------------ Z-A: the player's packages -> game files
@@ -613,18 +635,18 @@ static bool g_import_mode;                               // Z-A packages: the ba
 // zaimport (tools/zaimport, shipped as zaimport/zaimport.exe) writes <root>/exefs, romfs.bin, aoc/; its progress
 // lines ("progress <done> <total>") go to the bar, its last line is the reason when it fails
 static bool import_packages(const std::vector<std::string> &pkgs, const std::string &keys, const std::string &title_keys,
-                            std::string &err) {
+                            const std::string &out, std::string &err) {
     char tool[1100];
     if (!rt_resource("zaimport/zaimport" PLAT_EXE_SUFFIX, "build/zaimport/zaimport" PLAT_EXE_SUFFIX,
                      tool, sizeof tool)) {
         err = "the game file importer is missing from this copy of PokeL-ARecomp";
         return false;
     }
-    std::string log = g_root + "/import.log";
+    std::string log = out + "/import.log";
     std::vector<const char *> argv = {tool};
     if (!title_keys.empty()) argv.push_back("--title-keys"), argv.push_back(title_keys.c_str());
     argv.push_back(keys.c_str());
-    argv.push_back(g_root.c_str());
+    argv.push_back(out.c_str());  // (the setup's staging folder: runtime/paths.h rt_game_stage_begin)
     for (auto &p : pkgs) argv.push_back(p.c_str());
     argv.push_back(NULL);
     PlatProc p = plat_spawn(argv.data(), log.c_str(), false);
@@ -817,6 +839,34 @@ static float extract_progress(void) {
     return f < 0 ? 0 : f > 0.99f ? 0.99f : f;
 }
 
+// path is inside dir (or is it), links resolved (false: either can't be resolved)
+static bool path_inside(const std::string &path, const std::string &dir) {
+    char a[4096], b[4096];
+    if (!realpath(path.c_str(), a) || !realpath(dir.c_str(), b)) return false;
+    size_t k = strlen(b);
+    return !strncmp(a, b, k) && (a[k] == '/' || a[k] == '\\' || !a[k]);
+}
+
+// The staged files checked and moved into extracted/ (runtime/paths.c rt_game_stage_commit; it removes the staging
+// folder when they can't be). false: the failure panel says why - which game they are, when they're another one.
+static bool stage_commit(const char *stage) {
+    char what[160], err[600];
+    RtGameOwner own = rt_game_files_owner(stage, what, sizeof what);
+    if (own != RT_GAME_OURS) {
+        fprintf(stderr, "[launcher] what was read from your files is %s: not kept\n", what);
+        rt_game_stage_abort();
+        if (own == RT_GAME_NONE) set_failure(FAIL_MISSING);
+        else set_failure(FAIL_VERSION, std::string(TR("These files are ", "Esses arquivos s\xc3\xa3o: ")) + what + ".");
+        return false;
+    }
+    if (!rt_game_stage_commit(g_root.c_str(), stage, err, sizeof err)) {  // (also removes the staging folder)
+        fprintf(stderr, "[launcher] setup not finished: %s\n", err);
+        set_failure(FAIL_COPY, err);
+        return false;
+    }
+    return true;
+}
+
 // Builds the game code from the copied files (a few minutes); false = failed (the job line says so)
 static bool build_game_code(void) {
     int cores = SDL_GetNumLogicalCPUCores(), ram_gb = SDL_GetSystemRAM() / 1024;
@@ -826,8 +876,10 @@ static bool build_game_code(void) {
     if (jobs < 1) jobs = 1;
     if (jobs > 10) jobs = 10;
     GameBuildOpts o = {build_progress, jobs, build_cancelled};
-    // (only Pokémon Legends: Arceus 1.1.1's code is ever compiled: every path here checked it already - this is the
-    // last word, so no other game's files in the data folder can reach the generator and overwrite their game code)
+    // (only our own files are compiled: Legends: Arceus 1.1.1 and nothing else among them - runtime/paths.c. Every path
+    // here checked it already, and gamebuild_run checks the build again itself)
+    std::string refused;
+    if (game_files_refused(refused)) { set_failure(FAIL_VERSION, refused); return false; }
     if (!build_id_ok(g_root + "/exefs/main")) {
         set_failure(FAIL_VERSION, build_id_detail(g_root + "/exefs/main"));
         return false;
@@ -854,22 +906,11 @@ static void *extract_thread(void *) {
     std::string exefs, romfs;
     std::vector<std::string> pkgs;
     bool unusable = false;  // (game packages rather than its files)
-    {   // the data folder holds another recomp's game files (Violet's, set up in plarecomp/ by PokeV-Recomp v0.0.24 and
-        // older; another app's whole folder made the data root is refused earlier, in rt_paths_init): nothing is
-        // deleted, imported over or compiled there
-        char what[160];
-        if (rt_game_files_foreign(g_root.c_str(), what, sizeof what)) {
-            fprintf(stderr, "[launcher] %s holds %s's game files (another app's): not set up over them\n",
-                    g_root.c_str(), what);
-            set_failure(FAIL_VERSION, std::string(TR("The data folder holds ", "A pasta de dados tem os arquivos de ")) +
-                                          what + TR("'s files, from another app: they are left as they are. Move "
-                                                    "the extracted folder out of the data folder yourself, then set the "
-                                                    "game up again.", ", de outro programa: eles ficam como est\xc3\xa3o. "
-                                                    "Tire a pasta extracted da pasta de dados voc\xc3\xaa mesmo e prepare "
-                                                    "o jogo de novo."));
-            goto done;
-        }
-    }
+    std::string refused;
+    char stage[1100], serr[600];  // (the setup's staging folder: runtime/paths.h rt_game_stage_*)
+    // extracted/ holds another game's files or files that can't be identified (another recomp's, or Violet's set up in
+    // plarecomp/ by PokeV-Recomp v0.0.24 and older): nothing is deleted, imported over or compiled there
+    if (game_files_refused(refused)) { set_failure(FAIL_VERSION, refused); goto done; }
     if (src.empty() && check_copied_files(g_root).empty()) {  // copied already (an update needs new game code)
         g_copy_skipped = true;
         if (!build_game_code()) goto done;
@@ -877,7 +918,7 @@ static void *extract_thread(void *) {
     }
     set_job("Looking for the game files...");
     find_game(src, 0, exefs, romfs, unusable);
-    if ((exefs.empty() || romfs.empty()) && unusable) {  // packages: Pokémon Legends Z-A's (zaimport reads them)
+    if ((exefs.empty() || romfs.empty()) && unusable) {  // packages (zaimport reads them)
         int compressed = 0;
         find_packages(src, 0, pkgs, compressed);
         if (pkgs.empty() && compressed) {
@@ -895,46 +936,48 @@ static void *extract_thread(void *) {
         std::string title_keys = find_title_keys(src, keys);
         fprintf(stderr, "[launcher] %zu package(s), keys %s, title keys %s\n", pkgs.size(), keys.c_str(),
                 title_keys.empty() ? "-" : title_keys.c_str());
-        rt_remove_game_files(g_root.c_str());
-        mkdir(g_root.c_str(), 0755);
-        rt_mark_game_files_ours(g_root.c_str());  // (what's imported is ours to remove, whichever game it is)
+        // read into the staging folder; extracted/ is replaced only once what came out is checked (stage_commit)
+        if (!rt_game_stage_begin(g_root.c_str(), stage, sizeof stage, serr, sizeof serr)) {
+            set_failure(FAIL_COPY, serr);
+            goto done;
+        }
         g_import_mode = true;
         set_job("Reading your game files...");
-        if (!import_packages(pkgs, keys, title_keys, err)) {
+        if (!import_packages(pkgs, keys, title_keys, stage, err)) {
+            rt_game_stage_abort();
             set_failure(err.find("base game") != std::string::npos || err.find("no game packages") != std::string::npos
                             ? FAIL_UNUSABLE : FAIL_IMPORT, err);
             goto done;
         }
-        if (!build_id_ok(g_root + "/exefs/main")) {
-            set_failure(FAIL_VERSION, build_id_detail(g_root + "/exefs/main"));
-            goto done;
-        }
+        if (!stage_commit(stage)) goto done;
         if (!build_game_code()) goto done;
         goto check;
     }
     if (exefs.empty() || romfs.empty()) { set_failure(unusable ? FAIL_UNUSABLE : FAIL_NOT_FOUND); goto done; }
     if (!build_id_ok(exefs + "/main")) { set_failure(FAIL_VERSION, build_id_detail(exefs + "/main")); goto done; }
     {
-        // (the picked folder can't be PokeL-ARecomp's own copy: setting up again deletes that first)
-        char a[4096], b[4096];
-        mkdir(g_root.c_str(), 0755);
-        if (realpath(exefs.c_str(), a) && realpath(g_root.c_str(), b) && !strncmp(a, b, strlen(b)) &&
-            (a[strlen(b)] == '/' || a[strlen(b)] == '\\' || !a[strlen(b)])) {
+        if (!rt_game_stage_begin(g_root.c_str(), stage, sizeof stage, serr, sizeof serr)) {
+            set_failure(FAIL_COPY, serr);
+            goto done;
+        }
+        // (the picked folder can't be PokeL-ARecomp's own copy, nor the setup's staging folder)
+        if (path_inside(exefs, g_root) || path_inside(romfs, g_root) || path_inside(exefs, stage) ||
+            path_inside(romfs, stage)) {
+            rt_game_stage_abort();
             set_failure(FAIL_NOT_FOUND);
             goto done;
         }
-        rt_remove_game_files(g_root.c_str());  // (an earlier or interrupted setup's; removes the folder too)
-        mkdir(g_root.c_str(), 0755);
-        rt_mark_game_files_ours(g_root.c_str());
         unsigned long long rbytes = romfs_dir_bytes(romfs.c_str());
         g_total = rbytes;
         set_job("Copying the game files...");
-        if (!romfs_copy_tree(exefs.c_str(), (g_root + "/exefs").c_str(), NULL) ||
-            !romfs_copy_tree(romfs.c_str(), (g_root + "/romfs").c_str(), setup_progress)) {
+        if (!romfs_copy_tree(exefs.c_str(), (std::string(stage) + "/exefs").c_str(), NULL) ||
+            !romfs_copy_tree(romfs.c_str(), (std::string(stage) + "/romfs").c_str(), setup_progress)) {
+            rt_game_stage_abort();
             set_failure(FAIL_COPY);
             goto done;
         }
         g_phase_base = rbytes, g_done = rbytes;
+        if (!stage_commit(stage)) goto done;
         // (no data image: runtime/services/fs.c serves the copied romfs/ folder itself.) Retrying a cancelled
         // compilation then uses the copied files and their build cache.
         pthread_mutex_lock(&g_lock);
@@ -2036,8 +2079,10 @@ static void prelaunch_tab(float sc) {
         }
         ImGui::Spacing();
         if (ImGui::Button(TR("Delete", "Apagar"), ImVec2(220 * sc, 0))) {
-            bool ok = rt_remove_game_files(g_root.c_str());  // (runtime/paths.c: only what the extraction made)
-            set_job(ok ? "Game files deleted." : "Could not delete the game files (not in PokeL-ARecomp's data folder?).", !ok);
+            std::string refused;
+            bool ok = !game_files_refused(refused) && rt_remove_game_files(g_root.c_str());  // (runtime/paths.c)
+            set_job(ok ? "Game files deleted." : refused.empty() ? "Could not delete the game files (not in PokeL-ARecomp's "
+                    "data folder?)." : refused, !ok);
             g_files_deleted = true, gb = -1;
             ImGui::CloseCurrentPopup();
         }
@@ -2916,12 +2961,14 @@ extern "C" void launcher_run(const char *root) {
                     float chg_w = ImGui::GetItemRectSize().x / g_s;
                     if (button("##rebuild", TR("Recompile game", "Recompilar jogo"), x + pw + 14 + chg_w + 14, ty + 8, 0, 52, BTN_SECONDARY,
                                true)) {
-                        std::string lib = g_root + "/" + GAMELIB_NAME;
-                        std::string lib_id = lib + ".id";
-                        remove(lib.c_str());
-                        remove(lib_id.c_str());
+                        // (through the game-files guard: only our own files' compiled code - runtime/paths.c)
+                        rt_remove_game_file(g_root.c_str(), GAMELIB_NAME);
+                        rt_remove_game_file(g_root.c_str(), GAMELIB_NAME ".id");
                         pthread_mutex_lock(&g_lock);
-                        g_src = g_root;
+                        // (no folder to read: the setup's rebuild of the files already here. g_src = g_root used to send
+                        // it looking for "your" files inside extracted/ itself, which it refuses - so the code was
+                        // deleted and the rebuild never ran)
+                        g_src.clear();
                         pthread_t th;
                         pthread_create(&th, NULL, extract_thread, NULL);
                         pthread_detach(th);

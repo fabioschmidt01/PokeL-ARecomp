@@ -35,6 +35,13 @@ bool rt_dev_mode(void);           // dev / portable mode (rule 2 above): e.g. a 
 // Before rt_paths_init (the session log): the data root by the rules above; false in dev mode
 bool rt_data_root_early(char *out, size_t n);
 
+// Another app's data folder (LAS Recomp's, ZA Recomp's, PokeV-Recomp's): its folder name (lasrecomp, zarecomp,
+// pokev-recomp, or the move's "LAS Recomp" / "ZA Recomp" / "PokeV-Recomp" folders) anywhere in its path, another
+// game's build in its extracted/, or its settings / log naming LAS Recomp or PokeV-Recomp. Never used as the data root:
+// rt_paths_init refuses it before anything is written. why: for messages. (ZA Recomp's settings header can't tell it
+// apart: PokeL-ARecomp's own za-default.ini and v0.0.21 and older wrote "# ZA Recomp settings" too.)
+bool rt_data_root_foreign(const char *root, char *why, size_t n);
+
 // Choosing another data folder (the start screen). NULL = it can be changed; else why not (rules 1 / 2).
 const char *rt_data_root_fixed(void);
 typedef struct {
@@ -60,20 +67,43 @@ void rt_paths_restart(void);
 // starting directory or the executable's parent; NULL = shipped builds only). Absolute path in out; false = none.
 bool rt_resource(const char *name, const char *dev_rel, char *out, size_t n);
 
-// The only way the app deletes game files. Removes the named entry of game_dir (an extracted/ folder) only if
-// game_dir is <data root>/extracted itself (symlinks resolved; a symlinked extracted/ is refused) and the entry is
-// one the setup creates (exefs, romfs, leftover folders - romfs.bin from older versions) and not a link. The folder the user picked
-// never gets here. true = removed or not there.
+// Whose game files a folder (an extracted/, or the setup's staging folder) holds, from their contents only: every
+// NSO "main" in the game-file entries (exefs/main, and leftover nso_raw/, update_pfs/... folders; not romfs/ or the
+// build caches) is read (runtime/game_identity.h). No marker file or folder name makes files ours.
+typedef enum {
+    RT_GAME_NONE,     // no game-file entries there (or no such folder)
+    RT_GAME_OURS,     // only Pokémon Legends: Arceus 1.1.1: this app's to set up over, compile and delete
+    RT_GAME_FOREIGN,  // a build of another game the related recomps run (Violet, Z-A, Link's Awakening)
+    RT_GAME_UNKNOWN,  // game files that can't be identified: an unknown build, an unreadable or linked exefs/main, or no
+                      // exefs/main at all. Never compiled, never deleted automatically.
+} RtGameOwner;
+// what: for messages, e.g. "Pokémon Violet 4.0.0" or "an unknown build (0123456789abcdef)"
+RtGameOwner rt_game_files_owner(const char *game_dir, char *what, size_t n);
+
+// The only ways the app deletes game files. game_dir must be <data root>/extracted itself (symlinks resolved; a
+// symlinked extracted/ is refused) and hold RT_GAME_OURS or RT_GAME_NONE files; an entry is removed only if it is
+// one the setup creates (exefs, romfs, leftover folders - romfs.bin from older versions) and not a link. The folder
+// the user picked never gets here. true = removed or not there.
 bool rt_remove_game_file(const char *game_dir, const char *name);
-// All the game files set up there (rt_remove_game_file on each, then the empty folder). Saves, seeds, settings stay.
+// All the game files set up there (exefs last, so a cut-off delete still reads as ours), then the folder if empty.
+// Saves, seeds, settings stay.
 bool rt_remove_game_files(const char *game_dir);
-// game_dir holds another recomp's game files (Violet, Z-A, Link's Awakening: runtime/game_identity.h): never deleted
-// or written over (rt_remove_game_files refuses them; the start screen's setup stops). what: "Pokémon Violet 3.0.1".
-// Pokémon Legends: Arceus's own files, unknown builds, no files, and files this app set up itself (marked by
-// rt_mark_game_files_ours: e.g. a Z-A dump the player picked by mistake, imported before its build could be read): false.
-bool rt_game_files_foreign(const char *game_dir, char *what, size_t n);
-// The start screen's setup marks game_dir as this app's own copy before it copies or imports anything into it.
-bool rt_mark_game_files_ours(const char *game_dir);
+
+// Setting the game files up, as one transaction (runtime/ui/launcher.mm): files are copied or imported into a staging
+// folder only this app writes (<data root>/.plarecomp-import), checked there, and only then replace extracted/.
+//  - begin: game_dir must be <data root>/extracted (or not exist yet) and hold RT_GAME_OURS / RT_GAME_NONE files;
+//    takes the setup lock (one setup at a time, also across processes), clears an earlier setup's leftover staging
+//    folder and makes a fresh, empty one (its path in stage).
+//  - commit: the staged files must be RT_GAME_OURS with their game data (romfs.bin or romfs/); extracted/ is checked
+//    again, its own files removed, and the staging folder renamed into its place. Releases the lock.
+//  - abort: the staging folder removed (only it: never extracted/), the lock released.
+// false: err says why (for the player); nothing in extracted/ was changed unless commit got as far as replacing it.
+bool rt_game_stage_begin(const char *game_dir, char *stage, size_t n, char *err, size_t errn);
+bool rt_game_stage_commit(const char *game_dir, const char *stage, char *err, size_t errn);
+void rt_game_stage_abort(void);
+// A setup cut off (crash, power loss, killed) leaves its staging folder: removed at the next start (rt_paths_init),
+// unless another running copy of the app holds the setup lock. Only that folder: extracted/ is never touched.
+void rt_game_stage_recover(void);
 // Bytes taken by the extracted game files in game_dir (links not followed).
 unsigned long long rt_game_files_size(const char *game_dir);
 // Bytes taken by everything under path (links not followed).
