@@ -7314,6 +7314,22 @@ static void draw_(CmdRec *r, bool indexed) {
         const float *u = (const float *)(uintptr_t)st.ubuf[0][0].addr;
         bool boxed = widescreen_ui_boxed(u, st.ubuf[0][0].size);
         if (boxed) vp_box_16_9();
+        // Bands across the layout's whole width in its top or bottom 30% - the battles' dark cinema bars and the thin
+        // lines along them - aren't drawn in a window of another shape: boxed they sat inside the picture on a 16:10
+        // tablet (the scene showing above and below them), stretched to the window's edge their inner lines still did
+        // (user, 2026-11-21: "just remove them"). A 16:9 window keeps them (nothing is boxed there).
+        // LARECOMP_WIDE_UI_BANDS=1: boxed like the rest.
+        static int bands = -1;
+        if (bands < 0) bands = !ENV("LARECOMP_WIDE_UI_BANDS") || atoi(ENV("LARECOMP_WIDE_UI_BANDS")) == 0;
+        extern bool widescreen_ui_pane_bounds(const float *u, uint64_t size, float lo[2], float hi[2]);
+        float blo[2], bhi[2];
+        if (boxed && bands && widescreen_ui_pane_bounds(u, st.ubuf[0][0].size, blo, bhi) && blo[0] <= -0.99f &&
+            bhi[0] >= 0.99f && (blo[1] >= 0.4f || bhi[1] <= -0.4f)) {
+            static int nlog;
+            if (nlog++ < 8) LOG("[wide] band not drawn: %.2f..%.2f, fs hash %016llx\n", blo[1], bhi[1], (unsigned long long)g_cur_fs_hash);
+            SKIP(SK_HIDDEN);
+            return;
+        }
         if (g_debug_frame && (st.ubuf[0][0].size == 128 || st.ubuf[0][0].size == 560)) {  // (layout pane / font text)
             LOG("[draw]   ui %s %s: proj %g %g %g %g / %g %g %g %g", st.ubuf[0][0].size == 560 ? "pane" : "text",
                 boxed ? "boxed" : "not boxed", u[0], u[3], u[5], u[7], u[12], u[13], u[14], u[15]);
