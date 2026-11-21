@@ -10,7 +10,9 @@
 #include <psapi.h>
 #include <pdh.h>
 #include <pdhmsg.h>
+#if defined(__x86_64__) || defined(__i386__)
 #include <cpuid.h>
+#endif
 #endif
 
 #include "perfmon.h"
@@ -389,6 +391,7 @@ static void *sampler_thread(void *arg) {
     if (!pdh.tried) pdh_init(have_luid ? luid : NULL);
 
     char cpu_brand[64] = "CPU";
+#if defined(__x86_64__) || defined(__i386__)
     unsigned r[12], top = __get_cpuid_max(0x80000000, NULL);
     if (top >= 0x80000004) {
         for (unsigned i = 0; i < 3; i++) __get_cpuid(0x80000002 + i, &r[4 * i], &r[4 * i + 1], &r[4 * i + 2], &r[4 * i + 3]);
@@ -398,6 +401,7 @@ static void *sampler_thread(void *arg) {
         while (*p == ' ') p++;
         snprintf(cpu_brand, sizeof cpu_brand, "%s", p);
     }
+#endif
 #endif
 
     while (1) {

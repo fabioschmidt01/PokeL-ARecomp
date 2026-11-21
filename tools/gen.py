@@ -607,11 +607,17 @@ def main():
     ap.add_argument('--chunk-bytes', type=int, default=1500000)  # and about this much C (even compile times)
     ap.add_argument('--big-fn', type=int, default=100000)  # bytes of C from which a function gets its own file
     ap.add_argument('--limit', type=int, default=0)
+    # GUEST_SHIFT of the runtime (runtime/rt.h; given by runtime/gamebuild.c only when non-zero): the bases above already
+    # carry it; the patch sites (tools/*patches.py: the unshifted game addresses) and the emulator's scratch memory move
+    # along with them
+    ap.add_argument('--guest-shift', type=lambda s: int(s, 0), default=0)
     ap.add_argument('--simd', choices=('asm', 'c'),
                     default='asm' if platform.machine().lower() in ('arm64', 'aarch64') else 'c')
     args = ap.parse_args()
 
     t0 = time.time()
+    global SCRATCH_MEM
+    SCRATCH_MEM += args.guest_shift
     m = Module(args.name, args.nso, args.base, args.simd)
     global HOOKS, PATCHES
     main_build = Nso(os.path.join(os.path.dirname(args.nso), 'main')).build_id[:16]
@@ -636,6 +642,10 @@ def main():
         HOOKS, PATCHES = patches.HOOKS, patches.PATCHES
         label, build_id = game_addresses.VERSIONS[version]
         print(f'{args.name}: game version {label} (build {build_id[:16]}), address table {version}', file=sys.stderr)
+    if args.guest_shift:  # (the patch functions get the moved address: their instruction checks use a - gen.base)
+        HOOKS = {a + args.guest_shift: v for a, v in HOOKS.items()}
+        PATCHES = {a + args.guest_shift: v for a, v in PATCHES.items()}
+        print(f'{args.name}: guest shift {args.guest_shift:#x}, base {args.base:#x}', file=sys.stderr)
     starts = m.boundaries()
     hle = {}
     if args.hle and os.path.exists(args.hle):

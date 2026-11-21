@@ -28,32 +28,42 @@ static inline void __attribute__((format(printf, 1, 2))) rt_log(const char *fmt,
 // ---- address space layout (guest addresses == host addresses)
 // macOS reserves 0x2_0000_0000-0x70_0000_0000, and guest addresses must fit in 39 bits, so the
 // guest lives in a 12.5 GB window at 0x70_0000_0000 claimed at startup (see main.c).
-#define GUEST_LO     0x7000000000ull
+// GUEST_SHIFT (build flag, default 0) moves the whole layout below by that many bytes. A host whose user address space
+// ends at 39 bits with its top taken - Android (linker, libraries and stacks at 0x65_..-0x7f_..), so Wine + FEX in
+// GameHub too - can never reserve 0x70_..-0x80_..: built with GUEST_SHIFT=-0x6000000000 the window is
+// 0x10_0000_0000-0x20_0000_0000. The Switch loads a game anywhere (ASLR), so only the port's own fixed addresses move:
+// the generator gets the same shift (runtime/gamebuild.c -> tools/gen.py --guest-shift) and the game code is built
+// for the moved addresses; it is part of GAMELIB_CFLAGS, so a shifted and an unshifted game library never mix.
+#ifndef GUEST_SHIFT
+#define GUEST_SHIFT 0
+#endif
+#define GSHIFT       ((unsigned long long)(GUEST_SHIFT))
+#define GUEST_LO     (0x7000000000ull + GSHIFT)
 #ifdef __APPLE__
-#define GUEST_HI     0x7320000000ull
+#define GUEST_HI     (0x7320000000ull + GSHIFT)
 #else  // room for an SDK's virtual address memory too (Pokémon Legends Z-A reserves 12 GB, Pokémon Legends Arceus
        // 32 GB in one piece for its main StandardAllocator, in the alias region below; MAP_NORESERVE). The top of the
        // Switch's 39-bit address space.
-#define GUEST_HI     0x8000000000ull
+#define GUEST_HI     (0x8000000000ull + GSHIFT)
 #endif
-#define MAIN_BASE    0x7000000000ull
-#define SDK_BASE     0x7008000000ull   // (128 MB for main: Pokémon Legends Z-A's image is 0x5f7a000)
-#define SUBSDK_BASE  0x700a000000ull   // subsdk0, then one every SUBSDK_STEP (Pokémon Legends Arceus: 5.5 and 9.8 MB)
+#define MAIN_BASE    (0x7000000000ull + GSHIFT)
+#define SDK_BASE     (0x7008000000ull + GSHIFT)   // (128 MB for main: Pokémon Legends Z-A's image is 0x5f7a000)
+#define SUBSDK_BASE  (0x700a000000ull + GSHIFT)   // subsdk0, then one every SUBSDK_STEP (Pokémon Legends Arceus: 5.5 and 9.8 MB)
 #define SUBSDK_STEP  0x0001000000ull
-#define HLE_BASE     0x7080000000ull   // fake addresses for host-implemented functions
+#define HLE_BASE     (0x7080000000ull + GSHIFT)   // fake addresses for host-implemented functions
 #define HLE_SIZE     0x0000100000ull
-#define TLS_BASE     0x7090000000ull
+#define TLS_BASE     (0x7090000000ull + GSHIFT)
 #define TLS_SIZE     0x0000400000ull
-#define HLE_HEAP     0x7092000000ull   // guest-visible memory owned by host code
+#define HLE_HEAP     (0x7092000000ull + GSHIFT)   // guest-visible memory owned by host code
 #define HLE_HEAP_SIZE 0x000E000000ull
 #ifdef __APPLE__
-#define ALIAS_BASE   0x7100000000ull   // alias region (svcMapMemory targets)
+#define ALIAS_BASE   (0x7100000000ull + GSHIFT)   // alias region (svcMapMemory targets)
 #define ALIAS_SIZE   0x0100000000ull
 #else  // alias region (svcMapMemory targets; an SDK's virtual address memory reserves its address regions here)
-#define ALIAS_BASE   0x7400000000ull
+#define ALIAS_BASE   (0x7400000000ull + GSHIFT)
 #define ALIAS_SIZE   0x0C00000000ull   // 48 GB, up to GUEST_HI (16 GB fit Z-A; Arceus reserves 32 GB in one piece)
 #endif
-#define HEAP_BASE    0x7240000000ull
+#define HEAP_BASE    (0x7240000000ull + GSHIFT)
 #define HEAP_MAX     0x00D0000000ull   // 3.25 GB
 
 // ---- the game (kernel.c; set from exefs/main.npdm by main.c)

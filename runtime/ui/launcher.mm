@@ -2471,6 +2471,13 @@ extern "C" void launcher_run(const char *root) {
     if (status.empty() && prompts_wanted()) make_prompts(false);  // (set up before the icons existed: made now, aside)
     g_tab = TAB_PLAY, g_focus_play = true, g_changing_folder = false;
     g_mods_changed = true, g_save_scanned = false;
+    // a gamefiles/ folder in the data folder or next to the program: chosen ahead, so "Set up the game" is one press.
+    // Where docs/android-gamehub.md puts the dump: GameHub's Wine opens the folder dialog behind the start screen.
+    if (!status.empty() && g_src.empty())
+        for (const char *base : {rt_data_root(), rt_exe_dir()}) {
+            std::string gf = std::string(base ? base : "") + "/gamefiles";
+            if (base && *base && is_dir(gf)) { g_src = gf; break; }
+        }
     bool play = false;
     // LARECOMP_LAUNCHER_SHOT=<frame>[:<page>] (test): save build/launcher.png at that frame and exit; page: mods /
     // saves / about / settings[:<tab>] / askdelete / setup / extracting / fail<1-8> / tip / aspect; :pt or :en after it

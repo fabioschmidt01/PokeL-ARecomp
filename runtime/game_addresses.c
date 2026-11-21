@@ -6,7 +6,9 @@
 
 #include "rt.h"
 
-#define GA_ADDR(name, value) .name = UINT64_C(value),
+// (the addresses follow GUEST_SHIFT, rt.h - the one entry below the guest window, MAIN_CODE_SIZE, is a size: as it is.
+// Another game reads 1.0.0's table on purpose (game_version_select: "mapped memory"), so unshifted they'd fault)
+#define GA_ADDR(name, value) .name = UINT64_C(value) >= 0x7000000000ull ? UINT64_C(value) + GSHIFT : UINT64_C(value),
 static const GameAddrs ga_v1_0_0 = {
 #include "game_addresses/patches_v1_0_0.h"
 #include "game_addresses/runtime_v1_0_0.h"
