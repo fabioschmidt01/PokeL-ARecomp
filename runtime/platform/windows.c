@@ -45,6 +45,15 @@ static bool lazy_commit(uint64_t a) {
     return VirtualAlloc((void *)(uintptr_t)base, COMMIT_CHUNK, MEM_COMMIT, PAGE_READWRITE) != NULL;
 }
 
+// Thread context registers: x64 Rip / Rsp, ARM64 Pc / Sp (WINARCH=aarch64: Windows on ARM, ARM64 Wine on Android)
+#if defined(__aarch64__) || defined(_M_ARM64)
+#define CTX_PC(c) ((c)->Pc)
+#define CTX_SP(c) ((c)->Sp)
+#else
+#define CTX_PC(c) ((c)->Rip)
+#define CTX_SP(c) ((c)->Rsp)
+#endif
+
 static bool g_report_crashes;
 
 static LONG CALLBACK vectored_handler(EXCEPTION_POINTERS *ep) {
@@ -53,7 +62,7 @@ static LONG CALLBACK vectored_handler(EXCEPTION_POINTERS *ep) {
     uint64_t fa = er->ExceptionInformation[1];
     // (not for an execute fault: on a read-write page, retrying it would fault again forever)
     if (er->ExceptionInformation[0] != EXCEPTION_EXECUTE_FAULT && lazy_commit(fa)) return EXCEPTION_CONTINUE_EXECUTION;
-    if (g_report_crashes && rt_fault_watch(fa, ep->ContextRecord->Rip)) return EXCEPTION_CONTINUE_EXECUTION;
+    if (g_report_crashes && rt_fault_watch(fa, CTX_PC(ep->ContextRecord))) return EXCEPTION_CONTINUE_EXECUTION;
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
@@ -86,8 +95,19 @@ static void note_guest_conflict(uint64_t lo, uint64_t hi) {
     _putenv_s("LARECOMP_REEXEC_WHY", why);
 }
 
+// Write watch under Wine: no kernel dirty bits there - each watched page is write-protected and its first write after a
+// reset is a fault Wine's signal handler takes (with FEX on Android, GameHub: far dearer still). Pokémon Legends Arceus
+// loading its world writes GBs: a frame every ~10 s. So under Wine none, as on macOS (the renderer then goes without
+// page write tracking: exec.c pt_init). LARECOMP_WRITE_WATCH=1 / =0: on / off anywhere.
+static bool want_write_watch(void) {
+    const char *e = getenv("LARECOMP_WRITE_WATCH");
+    if (e && *e) return atoi(e) != 0;
+    HMODULE nt = GetModuleHandleA("ntdll.dll");
+    return !(nt && GetProcAddress(nt, "wine_get_version"));
+}
+
 bool plat_reserve_guest(uint64_t lo, uint64_t hi) {
-    void *p = VirtualAlloc((void *)(uintptr_t)lo, hi - lo, MEM_RESERVE | MEM_WRITE_WATCH, PAGE_READWRITE);
+    void *p = want_write_watch() ? VirtualAlloc((void *)(uintptr_t)lo, hi - lo, MEM_RESERVE | MEM_WRITE_WATCH, PAGE_READWRITE) : NULL;
     if (p == (void *)(uintptr_t)lo) g_write_watch = true;
     else p = VirtualAlloc((void *)(uintptr_t)lo, hi - lo, MEM_RESERVE, PAGE_READWRITE);
     if (p != (void *)(uintptr_t)lo) {
@@ -542,11 +562,15 @@ static void log_to_file_without_console(void) {
 // x86-64-v2 when the CPU is older (gamelib_old_cpu): say so instead of crashing with an illegal instruction on a CPU
 // without even that.
 static void require_cpu(void) {
+#if !defined(__x86_64__)
+    return;  // (ARM64: the game code is built for armv8.2-a, which every Windows on ARM / Android device has)
+#else
     __builtin_cpu_init();
     if (__builtin_cpu_supports("sse4.2") && __builtin_cpu_supports("popcnt")) return;
     MessageBoxA(NULL, "PokeL-ARecomp needs a CPU with SSE4.2 (Intel Core i3/i5/i7 / 2008 or newer, AMD Bulldozer / 2011 or "
                 "newer).", "PokeL-ARecomp", MB_ICONERROR | MB_OK);
     ExitProcess(1);
+#endif
 }
 
 // Fatal error (rt_fatal_trace): what happened in plain words (runtime/crash_explain.c) in a message box, when there is
@@ -587,6 +611,11 @@ static volatile DWORD g_focus_tid;
 void plat_sample_focus(void) { if (!g_focus_tid) g_focus_tid = GetCurrentThreadId(); }
 #define STK_DEPTH 24
 static DWORD WINAPI stack_sampler(double dur) {
+#if !defined(__x86_64__)  // (its unwinding is x64's: on ARM64 not yet)
+    (void)dur;
+    fputs("[sample] LARECOMP_SAMPLE_EXEC: x64 only (ARM64: not yet)", stderr);
+    return 0;
+#else
     bool all = !strcmp(getenv("LARECOMP_SAMPLE_EXEC"), "all");
     HANDLE hs[256];
     int nh = 0;
@@ -657,6 +686,7 @@ static DWORD WINAPI stack_sampler(double dur) {
     }
     fprintf(stderr, "[sample] %llu stacks of thread %lu -> build/stacks.txt\n", (unsigned long long)n, g_focus_tid);
     return 0;
+#endif
 }
 
 static DWORD WINAPI sampler_main(void *arg) {
@@ -680,9 +710,9 @@ static DWORD WINAPI sampler_main(void *arg) {
             CONTEXT ctx = {.ContextFlags = CONTEXT_CONTROL};
             if (SuspendThread(h) != (DWORD)-1) {
                 if (GetThreadContext(h, &ctx)) {
-                    samp_add(ctx.Rip, te.th32ThreadID);
-                    if (ctx.Rip >= caller_lo && ctx.Rip < caller_hi)  // (the thread is suspended: its stack can be read)
-                        samp_add(*(const uint64_t *)(uintptr_t)ctx.Rsp, te.th32ThreadID | 0x80000000u);
+                    samp_add(CTX_PC(&ctx), te.th32ThreadID);
+                    if (CTX_PC(&ctx) >= caller_lo && CTX_PC(&ctx) < caller_hi)  // (the thread is suspended: its stack can be read)
+                        samp_add(*(const uint64_t *)(uintptr_t)CTX_SP(&ctx), te.th32ThreadID | 0x80000000u);
                     total++;
                 }
                 ResumeThread(h);
@@ -915,13 +945,17 @@ static LONG WINAPI unhandled_filter(EXCEPTION_POINTERS *ep) {
     uint64_t fa = er->NumberParameters >= 2 ? er->ExceptionInformation[1] : 0;
     char what[48];
     snprintf(what, sizeof what, "exception %08lx", er->ExceptionCode);
+#if defined(__aarch64__) || defined(_M_ARM64)
+    uint64_t lr = ep->ContextRecord->Lr;
+#else
     // x64 has no link register: report the return address on top of the stack (valid at function entry).
     uint64_t lr = 0;
     MEMORY_BASIC_INFORMATION mi;
     if (VirtualQuery((void *)(uintptr_t)ep->ContextRecord->Rsp, &mi, sizeof mi) && mi.State == MEM_COMMIT)
         lr = *(uint64_t *)(uintptr_t)ep->ContextRecord->Rsp;
+#endif
     run_end();  // (the log has the report: not an end without a word)
-    rt_fault_report(what, fa, ep->ContextRecord->Rip, lr);
+    rt_fault_report(what, fa, CTX_PC(ep->ContextRecord), lr);
 }
 
 void plat_crash_handler_install(void) {
@@ -957,7 +991,7 @@ void plat_dump_threads(void) {
         bool got = false;
         if (SuspendThread(h) != (DWORD)-1) {
             if ((got = GetThreadContext(h, &ctx)))  // (a page at a time, up to the first that can't be read: the top)
-                for (uint64_t a = ctx.Rsp & ~7ull; words < 4096;) {
+                for (uint64_t a = CTX_SP(&ctx) & ~7ull; words < 4096;) {
                     size_t chunk = (size_t)((4096 - (a & 4095)) / 8);
                     if (chunk > 4096 - words) chunk = 4096 - words;
                     SIZE_T n = 0;
@@ -982,7 +1016,7 @@ void plat_dump_threads(void) {
                            *name ? ")" : "");
         int shown = 0;
         for (size_t i = 0; i <= words && shown < 10 && len < (int)sizeof line - 96; i++) {
-            uint64_t pc = i == 0 ? ctx.Rip : stack[i - 1];
+            uint64_t pc = i == 0 ? CTX_PC(&ctx) : stack[i - 1];
             if (pc >= g_lo && pc < g_hi) continue;  // (guest memory: never code, and VirtualQuery is slow on it)
             HMODULE m = NULL;
             if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -1135,6 +1169,10 @@ ssize_t pwrite(int fd, const void *buf, size_t n, off_t off) { return prw(fd, (v
 typedef struct { HANDLE process, job; } WinProcess;
 
 PlatProc plat_spawn(const char *const argv[], const char *log_path, bool append_log) {
+    return plat_spawn_in(argv, log_path, append_log, NULL);
+}
+
+PlatProc plat_spawn_in(const char *const argv[], const char *log_path, bool append_log, const char *cwd) {
     static __thread char cmd[32768];
     cmd[0] = 0;
     for (int i = 0; argv[i]; i++) append_arg(cmd, sizeof cmd, argv[i]);
@@ -1154,7 +1192,10 @@ PlatProc plat_spawn(const char *const argv[], const char *log_path, bool append_
     MultiByteToWideChar(CP_UTF8, 0, argv[0], -1, wprog, MAX_PATH);
     for (wchar_t *p = wprog; *p; p++) if (*p == L'/') *p = L'\\';
     const wchar_t *app = GetFullPathNameW(wprog, MAX_PATH, wfull, NULL) ? wfull : NULL;
-    BOOL ok = CreateProcessW(app, wcmd, NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED, NULL, NULL, &si, &pi);
+    static __thread wchar_t wcwd[MAX_PATH];
+    if (cwd) MultiByteToWideChar(CP_UTF8, 0, cwd, -1, wcwd, MAX_PATH);
+    BOOL ok = CreateProcessW(app, wcmd, NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED, NULL, cwd ? wcwd : NULL,
+                             &si, &pi);
     if (!ok) fprintf(stderr, "[plat] could not start %s (error %lu)\n", argv[0], GetLastError());
     CloseHandle(log);
     if (!ok) return 0;

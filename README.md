@@ -120,6 +120,17 @@ The game's ARM64 machine code is translated ahead-of-time (AOT) into C and compi
 
 ---
 
+## Android (GameHub) and Windows on ARM
+
+`PokeL-ARecomp-windows-arm64.zip` is a Windows ARM64 build for Android devices with a Snapdragon / Adreno GPU running
+it through GameHub (proton-arm64x, Turnip), and for Windows on ARM PCs. The game code is compiled to native ARM64,
+the guest memory sits lower (Android gives apps a 39-bit address space), and a shadow buffer stands in for the GPU
+memory import that Turnip lacks. About 30 fps in the open world on a Snapdragon 8 Elite tablet. The one-time setup
+(import + compiling the game code for ARM64) runs on a Windows PC (`PC-Setup.bat` in the zip); the folder is then copied
+to the device. Setup and requirements: [docs/android-gamehub.md](docs/android-gamehub.md).
+
+---
+
 ## Standalone ROM Extractor (PokeL-Extractor)
 
 Bundled with every release is **PokeL-Extractor** (`PokeL-Extractor.exe`), a standalone Nintendo Switch ROM analysis and extraction utility built with LibHac and C# / .NET 9.

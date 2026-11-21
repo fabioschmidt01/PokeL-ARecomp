@@ -571,6 +571,75 @@ static void *pipeline_cache_saver(void *a) {  // every 3 minutes, when it grew
     return NULL;
 }
 
+// The feature structures create_device puts in its chain, by type (all VkBool32 after the header). vk_mask_features asks
+// the driver for each and turns off what it lacks, logging it: several are asked for without a check (Vulkan 1.3 skips
+// the 1.2 ones' VK_WANT12), and Turnip on Adreno (Android, Wine + FEX in GameHub: the low-guest build) refused the
+// device with VK_ERROR_FEATURE_NOT_PRESENT. On a driver that has them all nothing changes.
+static const struct { VkStructureType t; size_t size; const char *name; } k_feature_structs[] = {
+#define FS(t, ty) {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_##t, sizeof(ty), #ty}
+    FS(VULKAN_1_1_FEATURES, VkPhysicalDeviceVulkan11Features),
+    FS(VULKAN_1_2_FEATURES, VkPhysicalDeviceVulkan12Features),
+    FS(VULKAN_1_3_FEATURES, VkPhysicalDeviceVulkan13Features),
+    FS(FAULT_FEATURES_EXT, VkPhysicalDeviceFaultFeaturesEXT),
+    FS(VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT, VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT),
+#ifdef VK_EXT_graphics_pipeline_library
+    FS(GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT, VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT),
+#endif
+#if defined(__linux__) && defined(VK_EXT_map_memory_placed)
+    FS(MAP_MEMORY_PLACED_FEATURES_EXT, VkPhysicalDeviceMapMemoryPlacedFeaturesEXT),
+#endif
+    FS(ADDRESS_BINDING_REPORT_FEATURES_EXT, VkPhysicalDeviceAddressBindingReportFeaturesEXT),
+    FS(ROBUSTNESS_2_FEATURES_EXT, VkPhysicalDeviceRobustness2FeaturesEXT),
+    FS(PRESENT_ID_FEATURES_KHR, VkPhysicalDevicePresentIdFeaturesKHR),
+    FS(PRESENT_WAIT_FEATURES_KHR, VkPhysicalDevicePresentWaitFeaturesKHR),
+    FS(CUSTOM_BORDER_COLOR_FEATURES_EXT, VkPhysicalDeviceCustomBorderColorFeaturesEXT),
+    FS(VERTEX_ATTRIBUTE_DIVISOR_FEATURES_EXT, VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT),
+    FS(EXTENDED_DYNAMIC_STATE_FEATURES_EXT, VkPhysicalDeviceExtendedDynamicStateFeaturesEXT),
+    FS(EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT, VkPhysicalDeviceExtendedDynamicState2FeaturesEXT),
+    FS(EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT, VkPhysicalDeviceExtendedDynamicState3FeaturesEXT),
+    FS(SYNCHRONIZATION_2_FEATURES_KHR, VkPhysicalDeviceSynchronization2FeaturesKHR),
+    FS(DYNAMIC_RENDERING_FEATURES_KHR, VkPhysicalDeviceDynamicRenderingFeaturesKHR),
+#undef FS
+};
+
+// LARECOMP_VK_FEATURE_CHECK=0: off (the chain as asked, as before)
+static void vk_mask_features(VkPhysicalDevice phys, VkPhysicalDeviceFeatures2 *f) {
+    const char *e = getenv("LARECOMP_VK_FEATURE_CHECK");
+    if (e && *e && !atoi(e)) return;
+    enum { MAXS = 32 };
+    VkBaseOutStructure *req[MAXS], *got[MAXS];
+    int idx[MAXS], n = 0;
+    VkPhysicalDeviceFeatures2 q = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    VkBaseOutStructure *prev = (VkBaseOutStructure *)&q;
+    for (VkBaseOutStructure *s = (VkBaseOutStructure *)f->pNext; s && n < MAXS; s = s->pNext) {
+        int k = -1;
+        for (int i = 0; i < (int)(sizeof k_feature_structs / sizeof k_feature_structs[0]); i++)
+            if (k_feature_structs[i].t == s->sType) k = i;
+        if (k < 0) { LOG("[vk] feature check: structure type %d unknown: left as asked\n", (int)s->sType); continue; }
+        VkBaseOutStructure *c = (VkBaseOutStructure *)calloc(1, k_feature_structs[k].size);
+        if (!c) break;
+        c->sType = s->sType;
+        prev->pNext = c, prev = c;
+        req[n] = s, got[n] = c, idx[n] = k, n++;
+    }
+    vkGetPhysicalDeviceFeatures2(phys, &q);
+    int dropped = 0;
+    VkBool32 *rb = (VkBool32 *)&f->features, *hb = (VkBool32 *)&q.features;
+    for (size_t i = 0; i < sizeof(VkPhysicalDeviceFeatures) / sizeof(VkBool32); i++)
+        if (rb[i] && !hb[i]) { LOG("[vk] feature check: VkPhysicalDeviceFeatures member %zu not supported: off\n", i); rb[i] = 0; dropped++; }
+    for (int j = 0; j < n; j++) {
+        size_t nb = (k_feature_structs[idx[j]].size - sizeof(VkBaseOutStructure)) / sizeof(VkBool32);
+        VkBool32 *r = (VkBool32 *)(req[j] + 1), *h = (VkBool32 *)(got[j] + 1);
+        for (size_t i = 0; i < nb; i++)
+            if (r[i] && !h[i]) {
+                LOG("[vk] feature check: %s member %zu not supported: off\n", k_feature_structs[idx[j]].name, i);
+                r[i] = 0, dropped++;
+            }
+        free(got[j]);
+    }
+    if (dropped) LOG("[vk] feature check: %d feature(s) the driver lacks turned off (LARECOMP_VK_FEATURE_CHECK=0: as asked)\n", dropped);
+}
+
 static void create_device(void) {
     uint32_t ne = 0;
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, NULL);
@@ -599,6 +668,15 @@ static void create_device(void) {
     if (g_vk.divisor) ext[n_ext++] = VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME;
     g_vk.host_import = has_ext(ep, ne, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);  // guest heap as a GPU buffer (exec.c)
     if (g_vk.host_import) ext[n_ext++] = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
+    if (!g_vk.host_import || ENV("LARECOMP_VK_LIST_EXT")) {  // (without the import shader global memory reads zero:
+        // characters skinned through it and text vanish - Turnip under Wine, GameHub. Say what the driver has.)
+        char all[8192];
+        size_t at = 0;
+        for (uint32_t i = 0; i < ne && at + 80 < sizeof all; i++)
+            at += (size_t)snprintf(all + at, sizeof all - at, "%s%s", i ? " " : "", ep[i].extensionName);
+        LOG("[vk] %s; device extensions (%u): %s\n", g_vk.host_import ? "host memory import" :
+            "no VK_EXT_external_memory_host: the guest heap can't be imported", ne, all);
+    }
     bool fault = has_ext(ep, ne, VK_EXT_DEVICE_FAULT_EXTENSION_NAME);  // device-lost diagnostics (vk_device_fault_report)
     if (fault) ext[n_ext++] = VK_EXT_DEVICE_FAULT_EXTENSION_NAME;
     g_fault_ext = fault;
@@ -857,6 +935,7 @@ static void create_device(void) {
     b->shaderClipDistance = h->shaderClipDistance;
     b->geometryShader = h->geometryShader;  // (fragment shaders reading gl_Layer: the Geometry capability)
     if (!h->shaderInt64) LOG("[vk] warning: no shaderInt64 (64-bit address math in shaders)\n");
+    vk_mask_features(g_vk.phys, &f);
     float prio = 1.0f;
     VkDeviceQueueCreateInfo qi = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueFamilyIndex = g_vk.qfam,
                                   .queueCount = 1, .pQueuePriorities = &prio};

@@ -50,9 +50,19 @@ static void end_all(void) {
     pthread_mutex_unlock(&g_plock);
 }
 
+// ARM64 - GameHub's Wine on Android: zig 0.17 opens every path under its current folder relative to that folder's
+// handle, and Wine fails that ("unable to open output directory ...: Unexpected"; the cache likewise, issue #79 on the
+// Steam Deck). Absolute paths open. So there the build's paths are absolute (gamebuild_run) and its tools start in an
+// empty folder of their own, an ancestor of none of them (LOCALAPPDATA\PokeL-ARecomp\cwd).
+static char g_spawn_cwd[1100];
+
 static PlatProc spawn(char **argv, const char *log) {
     pthread_mutex_lock(&g_plock);
+#ifdef _WIN32
+    PlatProc p = g_quitting ? 0 : plat_spawn_in((const char *const *)argv, log, false, g_spawn_cwd[0] ? g_spawn_cwd : NULL);
+#else
     PlatProc p = g_quitting ? 0 : plat_spawn((const char *const *)argv, log, false);
+#endif
     if (p && g_nprocs < MAX_PROCS) g_procs[g_nprocs++] = p;
     pthread_mutex_unlock(&g_plock);
     return p;
@@ -167,12 +177,45 @@ bool gamebuild_available(void) {
 #define ZIG_TARGET "x86_64-linux-gnu"
 #elif defined(__linux__) && defined(__aarch64__)
 #define ZIG_TARGET "aarch64-linux-gnu"
+#elif defined(_WIN32) && defined(__aarch64__)
+#define ZIG_TARGET "aarch64-windows-gnu"  // (Windows on ARM and ARM64 Wine - GameHub: no guessing the host under Wine)
 #else
 #define ZIG_TARGET ""
 #endif
 
+// Windows ARM64 (GameHub's Wine on Android): `zig cc` can't keep its cache there - "checking cache failed:
+// manifest_create Unexpected", the file locks it takes on its manifests - so the compiler is zig's clang itself
+// (`zig clang`, no cache) with what `zig cc` passes it for aarch64-windows-gnu (ZIG_VERBOSE_CC=1 shows it). The link
+// was already lld itself (zig lld-link with the runtime built ahead of time).
+#if defined(_WIN32) && defined(__aarch64__)
+#define ZIG_RAW 1
+#else
+#define ZIG_RAW 0
+#endif
+
 static void compiler(Args *a, const Tools *t) {
     add(a, t->cc);
+#if ZIG_RAW
+    if (t->zig) {
+        char lib[1100], opt[1200];
+        snprintf(lib, sizeof lib, "%s", t->cc);
+        char *s = strrchr(lib, '\\'), *f = strrchr(lib, '/');
+        if (f > s) s = f;
+        snprintf(s ? s : lib, sizeof lib - (s ? (size_t)(s - lib) : 0), "%slib", s ? "\\" : "");
+        const char *pre[] = {"clang", "--no-default-config", "-target", "aarch64-unknown-windows-gnu", "-nostdinc",
+                             "-fhosted", "-DNDEBUG", "-D__MSVCRT_VERSION__=0xE00", "-D_WIN32_WINNT=0x0a00",
+                             "-D__CRT__NO_INLINE", "-fno-stack-protector"};
+        for (size_t i = 0; i < sizeof pre / sizeof *pre; i++) add(a, pre[i]);
+        const char *inc[] = {"include", "libc\\include\\aarch64-windows-gnu", "libc\\include\\generic-mingw",
+                             "libc\\include\\aarch64-windows-any", "libc\\include\\any-windows-any"};
+        for (size_t i = 0; i < sizeof inc / sizeof *inc; i++) {
+            snprintf(opt, sizeof opt, "%s\\%s", lib, inc[i]);
+            add(a, "-isystem");
+            add(a, opt);
+        }
+        return;
+    }
+#endif
     if (t->zig) add(a, "cc");
     if (t->zig && ZIG_TARGET[0]) add(a, "-target"), add(a, ZIG_TARGET);
 }
@@ -341,7 +384,17 @@ static void add_cflags(Args *a, const Tools *t, bool giant) {
     for (char *f = strtok(buf, " "); f; f = strtok(NULL, " ")) {
         if (!strcmp(f, "-march=x86-64-v3") && gamelib_old_cpu()) f = (char *)"-march=x86-64-v2";
         if (giant && f[0] == '-' && f[1] == 'O') f = (char *)"-O0";
-        if (t->zig && !strncmp(f, "-march=", 7)) {
+        if (ZIG_RAW) {  // (clang itself: takes -march as it is)
+            add(a, f);
+        } else if (t->zig && !strncmp(f, "-march=armv", 11)) {  // (an ARM architecture level, armv8.2-a: zig has no such CPU,
+            char cpu[128];                                 //  only the generic one plus that level's feature, v8_2a)
+            snprintf(cpu, sizeof cpu, "-mcpu=generic+v%s", f + 11);
+            char *dash = strrchr(cpu, '-');
+            if (dash) *dash = 0;  // ("8.2-a" -> "8.2", then "8_2a")
+            for (char *c = cpu + 6; *c; c++) if (*c == '.') *c = '_';
+            snprintf(cpu + strlen(cpu), sizeof cpu - strlen(cpu), "a");
+            add(a, cpu);
+        } else if (t->zig && !strncmp(f, "-march=", 7)) {
             char cpu[128];
             snprintf(cpu, sizeof cpu, "-mcpu=%s", f + 7);
             for (char *c = cpu + 6; *c; c++) if (*c == '-') *c = '_';
@@ -384,6 +437,18 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     static bool registered;
     if (!registered) registered = true, atexit(end_all);
     g_killed = false;
+#if defined(_WIN32) && defined(__aarch64__)
+    static char game_abs[1100];  // (see spawn)
+    const char *la = getenv("LOCALAPPDATA");
+    if (_fullpath(game_abs, game_dir, sizeof game_abs) && la && *la) {
+        game_dir = game_abs;
+        snprintf(g_spawn_cwd, sizeof g_spawn_cwd, "%s\\PokeL-ARecomp", la);
+        mkdir(g_spawn_cwd, 0755);
+        snprintf(g_spawn_cwd, sizeof g_spawn_cwd, "%s\\PokeL-ARecomp\\cwd", la);
+        mkdir(g_spawn_cwd, 0755);
+        LOG("[gamebuild] tools start in %s, game files %s\n", g_spawn_cwd, game_dir);
+    }
+#endif
     if (!gamelib_full_id(game_dir, g_full_id, sizeof g_full_id)) {
         snprintf(why, why_size, "the game files' exefs/main is missing or unreadable");
         return false;
@@ -447,6 +512,21 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
 #else
         if (!realpath(rel, zc)) strlcpy(zc, rel, sizeof zc);
 #endif
+#if defined(_WIN32) && defined(__aarch64__)
+        // ARM64 - GameHub's Wine on Android: the installation is on Android's shared storage, where zig can't open its
+        // cache (the same "Unexpected": zig 0.17 opens it relative to the current folder, and locks files in it), so it
+        // goes to the Wine prefix's own LOCALAPPDATA (Clear doesn't reach it: the runtime there is built ahead anyway)
+        const char *la = getenv("LOCALAPPDATA");
+        if (la && *la) {
+            snprintf(zc, sizeof zc, "%s\\PokeL-ARecomp", la);
+            mkdir(zc, 0755);
+            snprintf(zc, sizeof zc, "%s\\PokeL-ARecomp\\zig-cache", la);
+            mkdir(zc, 0755);
+        }
+#endif
+        const char *zo = getenv("LARECOMP_ZIG_CACHE");  // (another folder for zig's caches)
+        if (zo && *zo) strlcpy(zc, zo, sizeof zc);
+        LOG("[gamebuild] zig cache %s\n", zc);
 #ifdef _WIN32
         _putenv_s("ZIG_GLOBAL_CACHE_DIR", zc);
         _putenv_s("ZIG_LOCAL_CACHE_DIR", zc);
@@ -461,8 +541,12 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
 
     // 1. the generator, every module at once; their finished files are compiled while it goes on
     Gen gens[4] = {{.name = "main"}, {.name = "sdk"}, {.name = "subsdk0"}, {.name = "subsdk1"}};
-    static const char *const base[4] = {"0x7000000000", "0x7008000000", "0x700a000000", "0x700b000000"};
-    _Static_assert(SUBSDK_BASE == 0x700a000000ull && SUBSDK_STEP == 0x1000000ull, "base[] follows the loader");
+    // (the loader's bases, rt.h: they follow GUEST_SHIFT, and the generator gets the same shift for its patch sites)
+    char base[4][24], shift[24];
+    const unsigned long long mod_base[4] = {MAIN_BASE, SDK_BASE, SUBSDK_BASE, SUBSDK_BASE + SUBSDK_STEP};
+    for (int i = 0; i < 4; i++) snprintf(base[i], sizeof base[i], "0x%llx", mod_base[i]);
+    snprintf(shift, sizeof shift, "%lld", (long long)(GUEST_SHIFT));
+    _Static_assert(SUBSDK_BASE - MAIN_BASE == 0xa000000ull && SUBSDK_STEP == 0x1000000ull, "base[] follows the loader");
     const int nmods = 2 + nsub;
     bool ok = true;
     for (int i = 0; i < nmods && ok; i++) {
@@ -485,6 +569,12 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         add(&a, base[i]);
         add(&a, g->out);
         if (i == 1) { add(&a, "--hle"); add(&a, t.hle); }
+        if (GUEST_SHIFT) { add(&a, "--guest-shift"); add(&a, shift); }  // (unshifted: the command line as upstream's)
+#ifdef __aarch64__
+        // the guest's FP/SIMD as inline asm, as the dev build's generated code: gen.py picks it from the machine it runs
+        // on, and the Windows ARM64 release's lasgen is the x64 one (emulated there: it would say "c")
+        add(&a, "--simd"); add(&a, "asm");
+#endif
         g->p = spawn(a.v, g->log);
         args_free(&a);
         if (!g->p) { snprintf(why, why_size, "the game code builder didn't start"); ok = false; }

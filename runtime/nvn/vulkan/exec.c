@@ -3828,21 +3828,25 @@ static void bind_note(int kind, uint64_t addr, uint64_t size) {
 // bound slot): the stage's effective storage table, with the copies' addresses where a range is snapshotted. Every
 // reader of the table in the draw / dispatch (drv_dedupe, cbuf_info, gmem_direct_pick, gmem_chunk_bind, gfast_prepare,
 // vc_mark_sbufs) takes sbufs(stage); st.sbuf itself keeps the game's bindings (rehashed next frame).
+static bool gmem_shadow, gsh_uses, gsh_store;  // (the guest heap shadow, below: no host import)
+static uint64_t gsh_copy(uint64_t addr, uint64_t size, bool store);
 static void snap_apply(int stage, uint32_t read_mask) {
     bool on = snap_on();
     for (int i = 0; i < 16; i++)
         if (st.sbuf[stage][i].addr && ((read_mask >> i) & 1)) bind_note(stage == 5 ? 3 : 2, st.sbuf[stage][i].addr, st.sbuf[stage][i].size);
-    if (!on) {
+    if (!on && !gmem_shadow) {
         sb_eff_on = false;
         if (stage == 5)
             for (int i = 0; i < 16; i++) gw_note("compute storage", st.sbuf[5][i].addr, st.sbuf[5][i].size, st.program ? st.program->stages[5].code_addr : 0);
         return;
     }
-    sb_eff_on = true;
+    sb_eff_on = true;  // (the shadow: every stage's table effective - a stage without global memory keeps the game's)
     memcpy(sb_eff[stage], st.sbuf[stage], sizeof sb_eff[stage]);
     for (int i = 0; i < 16; i++) {
         Range *r = &sb_eff[stage][i];
-        if (r->addr && ((read_mask >> i) & 1)) r->addr = snap_storage(r->addr, r->size, stage == 5);
+        if (!r->addr || !((read_mask >> i) & 1)) continue;
+        if (gmem_shadow) { if (gsh_uses) r->addr = gsh_copy(r->addr, r->size, gsh_store); }
+        else r->addr = snap_storage(r->addr, r->size, stage == 5);
     }
     if (stage == 5)
         for (int i = 0; i < 16; i++) gw_note("compute storage", st.sbuf[5][i].addr, st.sbuf[5][i].size, st.program ? st.program->stages[5].code_addr : 0);
@@ -4082,6 +4086,161 @@ static uint64_t gmem_size;
 static uint64_t gmem_lo, gmem_window;
 #define GM_IN(a, sz) (gmem_buf && (a) >= gwin_base + gmem_lo && (a) + (sz) <= gwin_base + gmem_lo + gmem_size)
 #define GM_OFF(a) ((a) - gwin_base - gmem_lo)
+
+// ---- no host import (Turnip under Wine on Android - GameHub - has no VK_EXT_external_memory_host): the gmem buffer
+// is a host-visible ring of copies instead of the game's memory ("shadow"). Before a draw or dispatch, every storage
+// range its shaders read (snap_apply: si->ssbo_read; compute: all bound) is copied into the ring and the stage's
+// table points the shader there (sb_eff, as the overlap snapshots do) - one copy per range and submission, so a
+// compute shader's stores reach the later passes of that submission, and they go back to the game's memory once the
+// GPU has finished it (gsh_writeback). Transform feedback goes to its mirror (xm_*), vertex / index data are copied
+// as with no import at all (guest_direct), GPU-filled indirect parameters are read from their ring copy (gsh_find).
+// Without this, shader global memory read zero: no dialogue or menu text, invisible (transform-feedback skinned)
+// characters. Storage ranges outside the import window are copied as well. LARECOMP_VK_GMEM_SHADOW=0: off (zeros).
+static bool gmem_shadow;
+static uint8_t *gsh_ptr;    // the ring's mapping
+static uint64_t gsh_head;   // its next free byte
+#define GSH_ENT 16384
+typedef struct { uint64_t addr, size, off, seq; bool store, back; } GshEnt;
+static GshEnt gsh[GSH_ENT];          // in allocation (= submission) order
+static uint64_t gsh_n, gsh_tail;     // entries made / retired (indices mod GSH_ENT)
+#define GSH_HASH 4096
+static struct { uint64_t addr, size, seq, ent; } gsh_h[GSH_HASH];  // this submission's copies, by range
+static uint64_t gsh_cur_seq;
+static uint64_t stat_gsh_bytes, stat_gsh_ranges, stat_gsh_waits;
+static bool gsh_uses, gsh_store;     // (set around snap_apply) the stage's shaders read / store global memory
+
+static void gsh_reset(void) {
+    gsh_head = 0, gsh_n = gsh_tail = 0, gsh_cur_seq = 0;
+    memset(gsh_h, 0, sizeof gsh_h);
+}
+static void gsh_back(GshEnt *e) {  // a storing shader's results, to the game's memory (its submission is done)
+    if (e->store && !e->back) memcpy((void *)(uintptr_t)e->addr, gsh_ptr + e->off, e->size);
+    e->back = true;
+}
+static void gsh_writeback(void) {  // (at each submission's first copy) every finished submission's stores
+    uint64_t done = vk_completed_seq();
+    for (uint64_t i = gsh_tail; i < gsh_n; i++) {
+        GshEnt *e = &gsh[i % GSH_ENT];
+        if (e->seq > done) break;
+        if (!e->back) gsh_back(e);
+    }
+}
+static void gsh_retire_one(void) {
+    GshEnt *e = &gsh[gsh_tail % GSH_ENT];
+    if (e->seq >= vk_pending_seq()) {  // (the submission being recorded filled the whole ring: overwritten, said once)
+        static int nl;
+        if (nl++ < 5) LOG("[gmem] shadow: one submission's copies fill the ring (%llu MB): older ones overwritten\n", (unsigned long long)(gmem_size >> 20));
+        gsh_tail++;
+        return;
+    }
+    if (e->seq > vk_completed_seq()) { stat_gsh_waits++; vk_wait_seq(e->seq); }
+    gsh_back(e);
+    gsh_tail++;
+}
+// n bytes of the ring for the current submission: the oldest copies there are retired first (their submission
+// waited for if it still runs - with a ring of the import window's size, rarely)
+static uint64_t gsh_alloc(uint64_t n) {
+    n = (n + 255) & ~255ull;
+    if (gsh_head + n > gmem_size) {  // wrap: the old copies past the head go
+        while (gsh_tail < gsh_n && gsh[gsh_tail % GSH_ENT].off >= gsh_head) gsh_retire_one();
+        gsh_head = 0;
+    }
+    while (gsh_tail < gsh_n) {  // live copies lie ahead of the head (older) or behind it (newer, since the last wrap)
+        GshEnt *e = &gsh[gsh_tail % GSH_ENT];
+        if (e->off < gsh_head || e->off >= gsh_head + n) break;
+        gsh_retire_one();
+    }
+    if (gsh_n - gsh_tail >= GSH_ENT) gsh_retire_one();
+    uint64_t at = gsh_head;
+    gsh_head += n;
+    return at;
+}
+// the address the shader reads a storage range [addr, addr + size) at: its copy in the ring
+static uint64_t gsh_copy(uint64_t addr, uint64_t size, bool store) {
+    if (!size || addr < GUEST_LO || addr + size > GUEST_HI) return addr;
+    if (size > gmem_size / 4) {
+        static int nl;
+        if (nl++ < 10) LOG("[gmem] shadow: storage range %llx+%llx too large to copy: read in place\n", (unsigned long long)addr, (unsigned long long)size);
+        return addr;
+    }
+    uint64_t seq = vk_pending_seq();
+    if (seq != gsh_cur_seq) {
+        gsh_cur_seq = seq;
+        gsh_writeback();
+        static uint64_t t_last;
+        uint64_t now = SDL_GetTicksNS();
+        if (!t_last) t_last = now;
+        if (now - t_last > 10000000000ull) {
+            LOG("[gmem] shadow: %llu storage ranges, %.1f MB copied, %llu waits in %.0f s\n", (unsigned long long)stat_gsh_ranges,
+                stat_gsh_bytes / 1048576.0, (unsigned long long)stat_gsh_waits, (now - t_last) / 1e9);
+            stat_gsh_ranges = stat_gsh_bytes = stat_gsh_waits = 0, t_last = now;
+        }
+    }
+    uint64_t h = (addr * 0x9E3779B97F4A7C15ull) ^ (size * 0xC2B2AE3D27D4EB4Full);
+    uint32_t s = (uint32_t)(h ^ (h >> 32)) & (GSH_HASH - 1);
+    if (gsh_h[s].seq == seq && gsh_h[s].addr == addr && gsh_h[s].size == size && gsh_h[s].ent >= gsh_tail) {
+        GshEnt *e = &gsh[gsh_h[s].ent % GSH_ENT];
+        if (store) e->store = true, e->back = false;
+        return gwin_base + gmem_lo + e->off;
+    }
+    uint64_t off = gsh_alloc(size);
+    memcpy(gsh_ptr + off, (const void *)(uintptr_t)addr, size);
+    gsh[gsh_n % GSH_ENT] = (GshEnt){addr, size, off, seq, store, false};
+    gsh_h[s].addr = addr, gsh_h[s].size = size, gsh_h[s].seq = seq, gsh_h[s].ent = gsh_n;
+    gsh_n++;
+    stat_gsh_bytes += size, stat_gsh_ranges++;
+    return gwin_base + gmem_lo + off;
+}
+// [a, a + n) inside one of this submission's copies: its ring offset (indirect parameters a compute shader filled)
+static bool gsh_find(uint64_t a, uint64_t n, uint64_t *off) {
+    uint64_t seq = vk_pending_seq();
+    for (uint64_t i = gsh_n, k = 0; i > gsh_tail && k < 4096; i--, k++) {
+        const GshEnt *e = &gsh[(i - 1) % GSH_ENT];
+        if (e->seq != seq) break;
+        if (a >= e->addr && a + n <= e->addr + e->size) { *off = e->off + (a - e->addr); return true; }
+    }
+    return false;
+}
+static VkDescriptorBufferInfo gsh_xfb_dummy(void) {
+    static int nl;
+    if (nl++ < 4) LOG("[gmem] shadow: transform feedback outside the mirror dropped%s", "\n");
+    VkSpan s = vk_transient(65536, 256);
+    return (VkDescriptorBufferInfo){s.buf, s.off, 65536};
+}
+static bool gsh_create(uint64_t lo, uint64_t size) {
+    VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = size,
+                             .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT};
+    VkBuffer buf;
+    if (vkCreateBuffer(g_vk.dev, &bi, NULL, &buf) != VK_SUCCESS) return false;
+    VkMemoryRequirements mr;
+    vkGetBufferMemoryRequirements(g_vk.dev, buf, &mr);
+    VkPhysicalDeviceMemoryProperties mp;
+    vkGetPhysicalDeviceMemoryProperties(g_vk.phys, &mp);
+    const VkMemoryPropertyFlags hv = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    int type = -1;
+    for (int pass = 0; pass < 2 && type < 0; pass++)  // (device-local and host-visible first: one memory on an integrated GPU)
+        for (uint32_t i = 0; i < mp.memoryTypeCount && type < 0; i++) {
+            VkMemoryPropertyFlags want = hv | (pass == 0 ? VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT : 0);
+            if (((mr.memoryTypeBits >> i) & 1) && (mp.memoryTypes[i].propertyFlags & want) == want) type = (int)i;
+        }
+    VkDeviceMemory mem = VK_NULL_HANDLE;
+    void *p = NULL;
+    VkMemoryAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = mr.size, .memoryTypeIndex = (uint32_t)type};
+    if (type < 0 || vkAllocateMemory(g_vk.dev, &ai, NULL, &mem) != VK_SUCCESS || vkBindBufferMemory(g_vk.dev, buf, mem, 0) != VK_SUCCESS ||
+        vkMapMemory(g_vk.dev, mem, 0, VK_WHOLE_SIZE, 0, &p) != VK_SUCCESS) {
+        LOG("[vk] guest heap shadow: no %llu MB host-visible buffer (memory type %d)\n", (unsigned long long)(size >> 20), type);
+        if (mem) vkFreeMemory(g_vk.dev, mem, NULL);
+        vkDestroyBuffer(g_vk.dev, buf, NULL);
+        return false;
+    }
+    gmem_buf = buf, gmem_mem = mem, gmem_size = size, gmem_lo = lo;
+    gsh_ptr = p, gmem_shadow = true;
+    gsh_reset();
+    LOG("[vk] guest heap shadow for shader global memory: %llu MB ring (memory type %d, flags %#x), window from heap offset %llu MB\n",
+        (unsigned long long)(size >> 20), type, mp.memoryTypes[type].propertyFlags, (unsigned long long)(lo >> 20));
+    return true;
+}
 // The window is anchored at the end of the physical region (gwin_max: constant for the session, so shaders may bake it): [lo, gwin_max).
 // Only with a physical-memory window (no heap), else the whole heap as before. The generated shader code computes ga = addr - base, ok = ga < size,
 // so translate_program / build_compute set base and size to the window too (the window changed them by lo: text and buildings read the wrong place).
@@ -4475,16 +4634,21 @@ void backend_guest_heap_prepare(void) {
 static uint64_t gmem_tried;  // heap size the import was last attempted for (gmem_info imports / re-imports)
 
 static VkDescriptorBufferInfo gmem_info(void) {
-    static int off = -1;
-    if (off < 0) off = ENV("LARECOMP_VK_NO_GMEM") != NULL || !g_vk.host_import || gc_lazy;  // (lazy: chunks instead)
+    static int off = -1, shadow = 0;
+    if (off < 0) {  // (lazy: chunks instead; no host import: the shadow ring, gsh_*)
+        const char *e = ENV("LARECOMP_VK_GMEM_SHADOW");
+        // (=1 forces it where the import exists too: the tablet's path tested on a PC)
+        shadow = !gc_lazy && !ENV("LARECOMP_VK_NO_GMEM") && (e ? atoi(e) != 0 : !g_vk.host_import);
+        off = ENV("LARECOMP_VK_NO_GMEM") != NULL || (!g_vk.host_import && !shadow) || gc_lazy;
+    }
     uint64_t want = (gwin_want() + 0xFFFF) & ~0xFFFFull;
     if (want > gwin_max) want = gwin_max;
     uint64_t wlo, wlen;
     gmem_window_get(&wlo, &wlen);
     if (!gmem_window) wlo = 0;
     static int nlog;
-    if (!nlog++) LOG("[vk] gmem: window %llu MB, import %s\n", (unsigned long long)(want >> 20), off ? "off" : "on");
-    if (!off && want > gmem_lo + gmem_size && !gmem_import(wlo, want - wlo)) {
+    if (!nlog++) LOG("[vk] gmem: window %llu MB, import %s\n", (unsigned long long)(want >> 20), off ? "off" : shadow ? "shadow (no host import)" : "on");
+    if (!off && want > gmem_lo + gmem_size && !(shadow ? gsh_create(wlo, gwin_max - wlo) : gmem_import(wlo, want - wlo))) {
         LOG("[vk] guest heap import failed (%llu MB): shader global memory reads return zero\n", (unsigned long long)(want >> 20));
         off = 1;
     }
@@ -5089,7 +5253,7 @@ static bool xm_on(void) {
         if (!on && !e) LOG("[vk] transform feedback mirror off (%s; LARECOMP_VK_XFB_MIRROR=1: on)\n",
                            cs == GPU_OFF ? "F1 > Compatibility" : "this AMD GPU, F1 > Compatibility to turn it on");
     }
-    return on && g_vk.host_import;
+    return on && (g_vk.host_import || gmem_shadow);  // (the shadow too: transform-feedback skinned characters)
 }
 
 static bool xm_inside(uint64_t a, uint64_t n) { return xm_lo && a >= xm_lo && a + n <= xm_lo + XM_SIZE; }
@@ -5160,7 +5324,7 @@ static bool xm_lookup(uint64_t a, uint64_t n, VkBuffer *buf, VkDeviceSize *off) 
 
 // the submission's end (outside any pass): what transform feedback wrote, to the heap
 static void xm_copy_back(VkCommandBuffer cb) {
-    if (!xm_back_n || !xm_buf || !gmem_buf) { xm_back_n = 0; return; }
+    if (!xm_back_n || !xm_buf || !gmem_buf || gmem_shadow) { xm_back_n = 0; return; }  // (the shadow: no heap to copy to)
     vk_full_barrier(cb);
     rec_CmdCopyBuffer(cb, xm_buf, gmem_buf, (uint32_t)xm_back_n, xm_back);
     vk_full_barrier(cb);
@@ -5569,6 +5733,7 @@ static bool guest_direct(int kind, uint64_t addr, uint64_t size, VkBuffer *buf, 
     }
     if (addr + size > gwin_base + gmem_lo + gmem_size && gwin_want() != gmem_tried) { gmem_tried = gwin_want(); gmem_info(); }
     if (gmem_lo && xm_lookup(addr, size, buf, off)) { stat_vtx_cached += size; return true; }  // (the mirror needs no import)
+    if (gmem_shadow) return false;  // (the shadow ring holds copies of storage ranges only: vertex / index data copied)
     if (!GM_IN(addr, size)) return false;
     if (vcache_lookup(addr, size, buf, off)) { stat_vtx_cached += size; return true; }
     if (kind == 0 && xm_lookup(addr, size, buf, off)) { stat_vtx_cached += size; return true; }
@@ -5606,6 +5771,8 @@ void vk_exec_reset(void) {
     }
     gmem_size = gmem_tried = 0;
     gmem_lo = 0;
+    gsh_ptr = NULL, gmem_shadow = false;  // (the shadow ring went with gmem_buf: made again on first use)
+    gsh_reset();
     xm_lo = 0, xm_back_n = 0;  // (the transform feedback mirror: placed again, nothing written yet)
     memset(xm_written, 0, sizeof xm_written);
     for (int k = 0; k < gc_n; k++) {  // (lazy chunks: their pages are replaced too)
@@ -5841,7 +6008,8 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
             w[n].pBufferInfo = &bi[n];
         } else if (b->type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {
             bi[n] = b->binding == GFAST_BUFFER_INDEX ? gfast_info()
-                  : b->binding == XFB_BUFFER_INDEX && xm_draw ? (VkDescriptorBufferInfo){xm_buf, 0, XM_SIZE} : gmem_info();
+                  : b->binding == XFB_BUFFER_INDEX && xm_draw ? (VkDescriptorBufferInfo){xm_buf, 0, XM_SIZE}
+                  : b->binding == XFB_BUFFER_INDEX && gmem_shadow ? gsh_xfb_dummy() : gmem_info();
             w[n].pBufferInfo = &bi[n];
         } else {
             continue;  // rscale / tint: written below, once the textures (and their scales) are known
@@ -6321,6 +6489,7 @@ static void dispatch_compute(uint32_t gx, uint32_t gy, uint32_t gz) {
             LOG("\n");
         }
     }
+    gsh_uses = cp->si->uses_gmem, gsh_store = cp->si->uses_gmem_store;  // (the shadow: copies for global memory readers)
     snap_apply(5, 0xFFFF);  // (overlap) every bound slot: the probe / copy decision per range, before gfast and the sets read the table
     vk_end_pass();
     VkCommandBuffer cb = vk_cmd();
@@ -6818,7 +6987,9 @@ static void draw_(CmdRec *r, bool indexed) {
             g_mirror_w = (float)st.rt.color[0]->width;
         }
     }
+    gsh_uses = pr->vi->uses_gmem, gsh_store = pr->vi->uses_gmem_store;  // (the shadow: copies for global memory readers)
     snap_apply(0, pr->vi->ssbo_read);  // (overlap) the storage slots the shaders read: a copy where the CPU rewrites the range
+    gsh_uses = pr->fi->uses_gmem, gsh_store = pr->fi->uses_gmem_store;
     snap_apply(1, pr->fi->ssbo_read);
     {   // fragment-shader hash: interior backdrop detection (widescreen), skip lists, item twinkle (renderer.m)
         static uint64_t last_fs, last_hash;
@@ -7143,6 +7314,22 @@ static void draw_(CmdRec *r, bool indexed) {
         const float *u = (const float *)(uintptr_t)st.ubuf[0][0].addr;
         bool boxed = widescreen_ui_boxed(u, st.ubuf[0][0].size);
         if (boxed) vp_box_16_9();
+        // Bands across the layout's whole width in its top or bottom 30% - the battles' dark cinema bars and the thin
+        // lines along them - aren't drawn in a window of another shape: boxed they sat inside the picture on a 16:10
+        // tablet (the scene showing above and below them), stretched to the window's edge their inner lines still did
+        // (user, 2026-11-21: "just remove them"). A 16:9 window keeps them (nothing is boxed there).
+        // LARECOMP_WIDE_UI_BANDS=1: boxed like the rest.
+        static int bands = -1;
+        if (bands < 0) bands = !ENV("LARECOMP_WIDE_UI_BANDS") || atoi(ENV("LARECOMP_WIDE_UI_BANDS")) == 0;
+        extern bool widescreen_ui_pane_bounds(const float *u, uint64_t size, float lo[2], float hi[2]);
+        float blo[2], bhi[2];
+        if (boxed && bands && widescreen_ui_pane_bounds(u, st.ubuf[0][0].size, blo, bhi) && blo[0] <= -0.99f &&
+            bhi[0] >= 0.99f && (blo[1] >= 0.4f || bhi[1] <= -0.4f)) {
+            static int nlog;
+            if (nlog++ < 8) LOG("[wide] band not drawn: %.2f..%.2f, fs hash %016llx\n", blo[1], bhi[1], (unsigned long long)g_cur_fs_hash);
+            SKIP(SK_HIDDEN);
+            return;
+        }
         if (g_debug_frame && (st.ubuf[0][0].size == 128 || st.ubuf[0][0].size == 560)) {  // (layout pane / font text)
             LOG("[draw]   ui %s %s: proj %g %g %g %g / %g %g %g %g", st.ubuf[0][0].size == 560 ? "pane" : "text",
                 boxed ? "boxed" : "not boxed", u[0], u[3], u[5], u[7], u[12], u[13], u[14], u[15]);
@@ -7562,7 +7749,8 @@ static void draw_indirect(CmdRec *r) {
         }
         uint64_t pa = ind + (uint64_t)i * stride;
         gmem_info();  // (the import, made on first use)
-        bool gpu = GM_IN(pa, 20) && !(pa & 3);
+        uint64_t gsh_off = 0;  // (the shadow: GPU-filled parameters are in a compute dispatch's ring copy, else the CPU's)
+        bool gpu = gmem_shadow ? !(pa & 3) && gsh_find(pa, 20, &gsh_off) : GM_IN(pa, 20) && !(pa & 3);
         if (gpu) {
             // The GPU fills in parts of the parameters (the instance count: Pokémon Z-A's culling compute), so the
             // draw reads them there; the CPU side covers the index range from the buffer's start (the first index
@@ -7583,7 +7771,7 @@ static void draw_indirect(CmdRec *r) {
             }
             if (ind_args_bad(p, pa, elements) || (elements && ib_overrun(r, p, pa))) continue;
             ir_note(pa, p, st.program ? st.program->stages[0].code_addr : 0);
-            g_ind_gpu = true; g_ind_off = GM_OFF(pa); g_ind_stride = stride;
+            g_ind_gpu = true; g_ind_off = gmem_shadow ? gsh_off : GM_OFF(pa); g_ind_stride = stride;
             d.x[0] = r->x[0];
             if (elements) {
                 d.x[1] = r->x[1]; d.x[2] = p[0] + p[2]; d.x[3] = r->x[2];

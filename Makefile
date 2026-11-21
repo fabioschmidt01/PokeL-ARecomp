@@ -13,6 +13,10 @@ else
 PLATFORM := macos
 endif
 PYTHON   ?= python3
+# GUEST_SHIFT=<bytes> (runtime/rt.h): the guest window moved by that much, e.g. -0x6000000000 -> 0x10_0000_0000 for hosts
+# whose 39-bit user address space has its top taken (Android: Wine + FEX in GameHub). Part of GAMELIB_ID (a shifted
+# game library is never loaded by an unshifted runtime), not of GENFLAGS (the release's zig runtime stays valid)
+GUEST_SHIFT ?=
 
 # Linux: ARCH (x86_64 / aarch64, default this machine's) picks the target, separately from PLATFORM. The generated code
 # differs per arch (AArch64 hosts run the guest's FP/SIMD as inline asm, others use the portable C of simd.h), so a
@@ -98,6 +102,17 @@ EXE      := $(B)/PokeL-ARecomp.exe
 DEPINC   := $(if $(DEPS),-I$(DEPS)/include)
 OSFLAGS  := -D_FILE_OFFSET_BITS=64 -D_POSIX_THREAD_SAFE_FUNCTIONS -D_CRT_RAND_S -DWIN32_LEAN_AND_MEAN -DNOMINMAX \
             $(if $(RELEASE),-DLARECOMP_ZIP_BUILD)  # (the log's [info] line: the release zip)
+# WINARCH=aarch64: an ARM64 build (Windows on ARM; ARM64 Wine on Android - GameHub - without FEX for the game code),
+# with this clang targeting aarch64-w64-mingw32 and MSYS2's clangarm64 libraries as the sysroot. The game code is
+# generated with gen.py --simd asm (the guest's FP/SIMD as inline asm, as on Apple Silicon).
+ifeq ($(WINARCH),aarch64)
+WINSYSROOT ?= /c/msys64/clangarm64
+CROSS    := --target=aarch64-w64-mingw32 --sysroot=$(WINSYSROOT) -stdlib=libc++ -rtlib=compiler-rt -unwindlib=libunwind
+CC       := clang $(CROSS)
+CXX      := clang++ $(CROSS)
+GENARCH  ?= -march=armv8.2-a
+WINDRES  ?= aarch64-w64-mingw32-windres  # (llvm-mingw's, on PATH: MSYS2's windres writes x86-64 objects. Setup: tools/za/dist-arm64.sh)
+endif
 GENARCH  ?= -march=x86-64-v3  # AVX2 + FMA for the lifted FP/SIMD code (simd.h); override for older CPUs
 GENFLAGS += -D_FILE_OFFSET_BITS=64 $(GENARCH)
 LDFLAGS  := -fuse-ld=lld -Wl,--stack,16777216 $(if $(DEPS),-L$(DEPS)/lib) -lSDL3 -lavformat -lavcodec -lavutil -lswscale \
@@ -121,7 +136,7 @@ endif
 GAMELIB_SRCS := tools/game_addresses.py runtime/game_addresses/versions.h $(wildcard runtime/game_addresses/patches_v*.h) tools/gen.py tools/lifter.py tools/analyze.py tools/nso.py tools/passes.py tools/patches.py \
                 tools/simd_c.py tools/flagfuse.py tools/regpromote.py tools/za_patches.py tools/pla_patches.py tools/rando/patch_variants.json tools/gamelib_entry.c runtime/hle/hle_symbols.txt \
                 runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h
-GAMELIB_ID := $(shell (cat $(GAMELIB_SRCS); echo '$(GENFLAGS)') | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)
+GAMELIB_ID := $(shell (cat $(GAMELIB_SRCS); echo '$(GENFLAGS)'$(if $(GUEST_SHIFT),; echo 'guest shift $(GUEST_SHIFT)')) | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)
 # The library's own id adds the game's main build ID (what `make gen` generated from: $(GEN)/main/main_build_id.txt),
 # so game code for another game version is never loaded (runtime/gamelib.h gamelib_full_id)
 GAMELIB_BUILD := $(shell cut -c1-16 $(GEN)/main/main_build_id.txt 2>/dev/null)
@@ -136,6 +151,10 @@ GAMELIB_BASE_ID := $(shell (cat $(GAMELIB_BASE_SRCS); echo '$(GENFLAGS) $(GAMELI
 RT_OBJ   := $(patsubst runtime/%.cpp,$(B)/rt/%.o,$(patsubst runtime/%.c,$(B)/rt/%.o,$(RT_SRC)))
 RTFLAGS  := -O2 -g -fno-strict-aliasing -Wall -Wno-unused-function -Iruntime -Iruntime/nvn $(DEPINC) $(OSFLAGS)
 CXXFLAGS := -O2 -g -std=c++17 -I$(IMGUI) -I$(IMGUI)/backends -Iruntime -Iruntime/nvn $(DEPINC)
+ifneq ($(GUEST_SHIFT),)
+RTFLAGS  += -DGUEST_SHIFT=$(GUEST_SHIFT)
+CXXFLAGS += -DGUEST_SHIFT=$(GUEST_SHIFT)
+endif
 
 all: $(EXE) $(if $(GEN_SRC),$(GAMELIB))
 
@@ -176,6 +195,9 @@ $(B)/inc/fsr2_shaders.inc: $(FSR2_SHADERS) tools/file_to_c_string.py
 $(B)/rt/nvn/vulkan/fsr2_shaders.o: $(B)/inc/fsr2_shaders.inc
 $(B)/rt/nvn/vulkan/fsr2_shaders.o: CXXFLAGS += -I$(B)/inc
 FSR2_OBJ := $(B)/fsr2/ffx_fsr2.o $(B)/fsr2/ffx_assert.o $(B)/fsr2/vk/ffx_fsr2_vk.o
+ifeq ($(WINARCH),aarch64)  # (libc++ under -std=c++17: MinGW's stdlib.h hides MSVC's _countof)
+$(FSR2_OBJ): CXXFLAGS += -D'_countof(a)=(sizeof(a)/sizeof((a)[0]))'
+endif
 # (FFX_GCC: FidelityFX's own switch for an empty FFX_API - without it every API function is __declspec(dllexport),
 # which only Windows' clang accepts; Linux: "'__declspec' attributes are not enabled")
 ifeq ($(PLATFORM),linux)

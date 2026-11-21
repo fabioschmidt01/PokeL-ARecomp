@@ -373,11 +373,66 @@ static void layer_init(void) {
     }
 }
 
+// Each layer's regular files (relative paths, sorted), walked once: layer_file looks there instead of a stat per romfs
+// file and layer - 19095 files in Pokémon Legends Arceus, a few ms each through Wine + Android's FUSE (GameHub: an 80 s
+// black screen at boot behind the controller prompts overlay alone), microseconds on a PC either way. Case-insensitive
+// on Windows, as stat there. LARECOMP_FS_LAYER_STAT=1: a stat per file, as before.
+static char **lidx[32];
+static int lidx_n[32], lidx_cap[32];
+static int lidx_built = -1;  // -1 not yet, 0 off (LARECOMP_FS_LAYER_STAT), 1 built
+RT_ON_RESET(layer_index_reset) {
+    for (int i = 0; i < 32; i++) {
+        for (int j = 0; j < lidx_n[i]; j++) free(lidx[i][j]);
+        free(lidx[i]);
+        lidx[i] = NULL, lidx_n[i] = lidx_cap[i] = 0;
+    }
+    lidx_built = -1;
+}
+static int lidx_cmp(const void *a, const void *b) {
+#ifdef _WIN32
+    return _stricmp(*(char *const *)a, *(char *const *)b);
+#else
+    return strcmp(*(char *const *)a, *(char *const *)b);
+#endif
+}
+static void lidx_walk(int l, const char *rel) {
+    char dirp[1200];
+    snprintf(dirp, sizeof dirp, "%s/%s", layer_root[l], rel);
+    DIR *d = opendir(dirp);
+    if (!d) return;
+    for (struct dirent *e; (e = readdir(d));) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        char r2[1024], h2[1200];
+        snprintf(r2, sizeof r2, "%s%s%s", rel, rel[0] ? "/" : "", e->d_name);
+        snprintf(h2, sizeof h2, "%s/%s", layer_root[l], r2);
+        struct stat sb;
+        if (stat(h2, &sb)) continue;
+        if (S_ISDIR(sb.st_mode)) { lidx_walk(l, r2); continue; }
+        if (!S_ISREG(sb.st_mode)) continue;
+        if (lidx_n[l] == lidx_cap[l]) {
+            lidx_cap[l] = lidx_cap[l] ? lidx_cap[l] * 2 : 64;
+            lidx[l] = realloc(lidx[l], sizeof *lidx[l] * lidx_cap[l]);
+        }
+        lidx[l][lidx_n[l]++] = strdup(r2);
+    }
+    closedir(d);
+}
+
 static bool layer_file(const char *path, char *out, size_t cap) {
     layer_init();
     if (trinity && !strcmp(path, "arc/data.trpfd")) return false;
+    if (lidx_built < 0) {
+        const char *e = getenv("LARECOMP_FS_LAYER_STAT");
+        lidx_built = !(e && *e && atoi(e));
+        for (int i = 0; lidx_built && i < nlayers; i++) {
+            lidx_walk(i, "");
+            if (lidx_n[i]) qsort(lidx[i], lidx_n[i], sizeof *lidx[i], lidx_cmp);
+        }
+    }
     for (int i = 0; i < nlayers; i++) {
+        if (lidx_built && !(lidx_n[i] && bsearch(&path, lidx[i], lidx_n[i], sizeof *lidx[i], lidx_cmp))) continue;
         snprintf(out, cap, "%s/%s", layer_root[i], path);
+        if (lidx_built) return true;
         struct stat sb;
         if (!stat(out, &sb) && S_ISREG(sb.st_mode)) return true;
     }
