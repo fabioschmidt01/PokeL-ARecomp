@@ -32,12 +32,14 @@ unpack() { rm -rf "$S/$2" && mkdir -p "$S/$2" && tar -xf "$S/$1" -C "$S/$2" --st
 fetch https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz \
       8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e ffmpeg-9.0.2.tar.xz
 
-if [ ! -f "$P/lib/libavcodec.dll.a" ]; then
+if [ ! -f "$P/lib/libavcodec.dll.a" ] || [ ! -f "$P/lib/libswresample.dll.a" ]; then
+    # (swresample on: FFmpeg's Opus decoder depends on it - without it configure dropped the decoder silently, and the
+    # game's music, decoded through hwopus (runtime/services/opus.c), had none: issue #17)
     unpack ffmpeg-9.0.2.tar.xz ffmpeg
     (cd "$S/ffmpeg" && ./configure --prefix="$P" --cc=gcc --cxx=g++ --arch=x86_64 --target-os=mingw32 \
         --enable-shared --disable-static --disable-asm --disable-x86asm --disable-inline-asm \
         --disable-autodetect --disable-programs --disable-doc --disable-network --disable-avdevice --disable-avfilter \
-        --disable-swresample --disable-everything \
+        --disable-everything \
         --enable-protocol=file --enable-demuxer=matroska,mov \
         --enable-decoder=vp9,vp8,vorbis,opus,h264,aac --enable-parser=vp9,vp8,vorbis,opus,h264,aac \
         && make -j"$JOBS" && make install)

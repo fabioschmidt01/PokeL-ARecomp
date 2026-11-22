@@ -384,7 +384,8 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     static bool registered;
     if (!registered) registered = true, atexit(end_all);
     g_killed = false;
-    if (!gamelib_full_id(game_dir, g_full_id, sizeof g_full_id)) {
+    extern bool gamelib_want_id(const char *game_dir, char *out, size_t size);  // (runtime/gamelib.c: with the code cheats)
+    if (!gamelib_want_id(game_dir, g_full_id, sizeof g_full_id)) {
         snprintf(why, why_size, "the game files' exefs/main is missing or unreadable");
         return false;
     }
@@ -398,6 +399,15 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     snprintf(tmp, sizeof tmp, "%s" SEP "%s.tmp", work, GAMELIB_NAME);
     char input_paths[8][1100], spec[4096];
     snprintf(input_paths[0], sizeof input_paths[0], "%s" SEP "exefs" SEP "main", game_dir);
+    {   // the code cheats (runtime/pla_cheats.c) built in: the generator lifts a copy of exefs/main with their writes
+        extern bool pla_cheats_code_active(void);
+        extern bool pla_cheats_patch_nso(const char *src, const char *dst);
+        char patched[1100];
+        snprintf(patched, sizeof patched, "%s" SEP ".gamebuild" SEP "main_cheats", game_dir);
+        mkdir(work, 0755);
+        if (pla_cheats_code_active() && pla_cheats_patch_nso(input_paths[0], patched))
+            snprintf(input_paths[0], sizeof input_paths[0], "%s", patched);
+    }
     snprintf(input_paths[1], sizeof input_paths[1], "%s" SEP "exefs" SEP "sdk", game_dir);
     // subsdkN: only some games have them (Pokémon Legends Arceus: subsdk0, subsdk1), numbered from 0 without gaps as the
     // loader reads them (runtime/loader.c), each generated at its load address (SUBSDK_BASE + N * SUBSDK_STEP)
@@ -477,6 +487,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         }
         char nso[1100];
         snprintf(nso, sizeof nso, "%s" SEP "exefs" SEP "%s", game_dir, g->name);
+        if (!strcmp(g->name, "main")) snprintf(nso, sizeof nso, "%s", input_paths[0]);  // (with the code cheats, above)
         Args a = {0};
         add(&a, t.gen);
         if (t.gen_script[0]) add(&a, t.gen_script);

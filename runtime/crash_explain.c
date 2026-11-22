@@ -12,6 +12,7 @@
 
 static char g_line[512];   // the first fatal line (FATAL message / "signal 11 accessing 0x10")
 static uint64_t g_pc;      // a crash's host pc (0: a FATAL)
+int rt_gpu_bad_code;
 int rt_romfs_files = -1;   // the game's own RomFS files (runtime/services/fs.c; -1: not read yet)
 enum { ROMFS_FILES = 3836 };  // (every supported version: runtime/ui/launcher.mm counts the same)
 
@@ -51,17 +52,27 @@ static bool in_gpu_driver(uint64_t pc) {
     static const char *const drivers[] = {"nvoglv", "nvgpucomp", "nvwgf", "libnvidia", "amdvlk", "amdxc", "atiumd",
                                           "atig6", "igvk", "igc64", "igd", "libvulkan_radeon", "libvulkan_intel",
                                           "libvulkan_nouveau", "libvulkan_lvp", "libvulkan_virtio", "AGXMetal",
-                                          "MTLCompiler", "libLLVM", "radeonsi"};
+                                          "MTLCompiler", "libLLVM", "radeonsi",
+                                          // (DirectX 12: our Dozen and the DXIL compiler under it - a compute shader's
+                                          // build crashed deep in vulkan_dzn's recursion during the startup preparation)
+                                          "vulkan_dzn", "dxil", "dxcompiler"};
     for (size_t i = 0; i < sizeof drivers / sizeof *drivers; i++)
         if (contains_nocase(m, drivers[i])) return true;
     return false;
 }
 
+// (device.c vk_compile_crash_recover; LARECOMP_TEST_COMPILE_CRASH: the test's crash is in build_pipeline itself)
+bool rt_compile_crash_at(uint64_t pc) {
+    return in_gpu_driver(pc) || getenv("LARECOMP_TEST_COMPILE_CRASH") || getenv("LARECOMP_TEST_COMPILE_CRASH_URGENT");
+}
+
 void rt_crash_explain(char *out, size_t n, const char *log_path) {
     static const char *const report = "Please report it as a GitHub issue and attach the log file below. "
                                       "Your progress up to your last save or autosave is safe.";
-    const char *app = g_game_is_la ? "LAS Recomp" : "PokeL-ARecomp";
+    const char *app = "PokeL-ARecomp";  // (not by g_game_is_la: a driver error comes before the game is detected, and showed "LAS Recomp" - issue #23)
     char head[160], what[400];
+    extern void vk_compile_crash_note(void) __attribute__((weak));  // (Vulkan: was this thread compiling a pipeline?)
+    if (vk_compile_crash_note && g_pc && rt_compile_crash_at(g_pc)) vk_compile_crash_note();
     // (the file count is Link's Awakening's: Pokémon Z-A's RomFS has its own, and every crash read as missing files)
     if (g_game_is_la && rt_romfs_files >= 0 && rt_romfs_files < ROMFS_FILES) {
         snprintf(head, sizeof head, "Your game files are incomplete");
@@ -89,6 +100,17 @@ void rt_crash_explain(char *out, size_t n, const char *log_path) {
                                                                          // unwind; runtime/hle/warp.c rt_cxa_throw)
         snprintf(head, sizeof head, "The game ran into an error it couldn't recover from");
         snprintf(what, sizeof what, "This is a bug in %s, not a problem with your game files or PC. %s", app, report);
+    } else if (rt_gpu_bad_code < 0) {
+        snprintf(head, sizeof head, "The graphics driver's shader compiler crashed");
+        snprintf(what, sizeof what, "It crashed on one of the game's shaders. %s now knows which one and will skip it, so one "
+                 "effect may be missing. Start the game again: nothing is lost, up to your last save or autosave.", app);
+    } else if (rt_gpu_bad_code) {  // (before the Vulkan messages: the device loss that follows says nothing useful)
+        snprintf(head, sizeof head, "The graphics driver produced bad code for the GPU");
+        snprintf(what, sizeof what, rt_gpu_bad_code == 1
+                 ? "%s has deleted the driver's shader cache, which may be why. Start the game again: it stutters for a while "
+                   "as shaders are built again, nothing else changes. If it comes back, updating your graphics driver can help."
+                 : "%s will now build shaders without the driver's optimizer, which avoids this kind of driver bug. Start the "
+                   "game again: it may run slower until you update your graphics driver.", app);
     } else if (has("svcBreak")) {  // (the game's own check failed: Pokémon Z-A, rarely, while it starts - a timing race)
         snprintf(head, sizeof head, "The game stopped at one of its own checks");
         snprintf(what, sizeof what, "Start it again: this happens now and then while the game starts, and the next "

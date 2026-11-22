@@ -235,6 +235,7 @@ static void boot(const char *root) {
     }
     g_game_is_la = g_program_id == 0x01006BB00C6F0000ull;
     if (!g_game_is_la) LOG("[pla] Pokémon Legends: Arceus native runtime active\n");
+    if (!g_game_is_la) { extern void pla_cheats_boot(void); pla_cheats_boot(); }  // (runtime/pla_cheats.c: code cheats' writes in the image)
     LOG("main thread: prio %d, stack 0x%x, program 0x%016llx\n", prio, stack_size, (unsigned long long)g_program_id);
 
     // nn::init::Start(thread_handle, args_region, init_sdk, init_main); newer SDKs (19: Pokémon Legends Z-A) add a

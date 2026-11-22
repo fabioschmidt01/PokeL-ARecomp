@@ -934,6 +934,7 @@ static void renderer_open_output(Renderer *r) {
     if (getenv("LARECOMP_AUDIO_WAV")) {
         r->wav = fopen(getenv("LARECOMP_AUDIO_WAV"), "wb");
         if (r->wav) wav_header(r->wav, 0);
+        LOG("[audren] recording the output to %s%s\n", getenv("LARECOMP_AUDIO_WAV"), r->wav ? "" : ": cannot write there");
     }
     if (getenv("LARECOMP_NO_AUDIO") && strcmp(getenv("LARECOMP_NO_AUDIO"), "0")) return;
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) { LOG("[audren] SDL audio init failed: %s\n", SDL_GetError()); return; }
@@ -969,7 +970,19 @@ static uint32_t new_event_handle(void) {
 
 static void audio_device(Service *s, IpcReq *req, IpcResp *resp) {
     (void)s;
+    {   // (each command once in the log: what the game asks the audio device - its volume, its channels; the game's
+        // whole output came out ~30 dB low, 2026-11-19)
+        static uint32_t seen;
+        if (req->cmd < 32 && !(seen & (1u << req->cmd))) {
+            seen |= 1u << req->cmd;
+            LOG("[audio] IAudioDevice cmd %u (in %u bytes%s)\n", req->cmd, (unsigned)req->data_size,
+                req->data_size >= 4 ? ", first float follows" : "");
+            if (req->data_size >= 4) LOG("[audio]   in float %g\n", IN(float, 0));
+        }
+    }
     switch (req->cmd) {
+    case 1: case 7: break;  // SetAudioDeviceOutputVolume(Auto): kept by the system, the output stays at the menu's volume
+    case 2: OUT(float, 0) = 1.0f; resp_size(resp, 4); break;  // GetAudioDeviceOutputVolume (8: its Auto form, below)
     case 0: case 6: {  // ListAudioDeviceName(Auto)
         IpcBuf *b = out_buf(req, 0);
         if (b && b->size >= 0x100) strcpy((char *)(uintptr_t)b->addr, "AudioTvOutput");
@@ -1246,7 +1259,11 @@ static void audio_out(Service *s, IpcReq *req, IpcResp *resp) {
         resp_size(resp, 1);
         break;
     }
-    case 12: break;
+    case 12: {  // SetAudioOutVolume: logged (ignored before, and still: the game mixes its own volume in)
+        static int n;
+        if (n++ < 4) LOG("[audout] SetAudioOutVolume %g\n", req->data_size >= 4 ? IN(float, 0) : -1.0f);
+        break;
+    }
     case 13: OUT(float, 0) = 1.0f; resp_size(resp, 4); break;
     default: LOG("[audout] IAudioOut cmd %u (ok)\n", req->cmd);
     }

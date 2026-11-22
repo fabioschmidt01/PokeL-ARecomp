@@ -103,7 +103,7 @@ static const char *build_version(const uint8_t id[8]) {
 static bool build_is_za(const uint8_t id[8]) { return build_version(id) && memcmp(id, BUILD_ID, 8); }
 // The release tag this build is (also names the release files; Makefile / tools/bundle_macos.sh / make_dmg.sh read
 // it): PokeL-ARecomp's v<major>.<minor>.<patch>.
-#define LARECOMP_VERSION "v0.26.7"
+#define LARECOMP_VERSION "v0.27.0"
 extern "C" const char *rt_version(void) { return LARECOMP_VERSION; }  // (runtime/main.c: the log's first line)
 extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }  // (the shader caches' tag)
 
@@ -119,8 +119,8 @@ static void lang_update(void) { g_pt = settings_ui_portuguese(); }  // (runtime/
 // The start screen asks GitHub for the project's releases once per launch (a background curl, which macOS and
 // Windows 10+ ship) and offers the best one if it outranks this build: any v<x.y.z> above every beta, betas by
 // number; other tags are ignored. Offline / no curl / anything unexpected: nothing is shown.
-#define RELEASES_URL "https://api.github.com/repos/Hexveil404/PokeZ-ARecomp/releases?per_page=100"
-#define RELEASE_PAGE "https://github.com/Hexveil404/PokeZ-ARecomp/releases/tag/"
+#define RELEASES_URL "https://api.github.com/repos/fabioschmidt01/PokeL-ARecomp/releases?per_page=100"
+#define RELEASE_PAGE "https://github.com/fabioschmidt01/PokeL-ARecomp/releases/tag/"
 
 static long long tag_rank(const std::string &t) {
     int n, a, b, c;
@@ -144,10 +144,10 @@ static std::string g_update_tag;  // a newer release's tag (g_update_lock)
 static std::string g_update_url;  // its Windows zip (browser_download_url: the download counts on GitHub as a click)
 static long long g_update_size;
 static pthread_mutex_t g_update_lock = PTHREAD_MUTEX_INITIALIZER;
-#define UPDATE_ASSET "ZA-Recomp-windows.zip"
+#define UPDATE_ASSET "PokeL-ARecomp-windows-x64.zip"
 
 static void *update_thread(void *) {
-    return NULL;  // Standalone release: external Z-A update checks disabled
+    return NULL;  // (off for now: this project's own releases, above, once the updater is tested with them)
     std::string body;
     if (const char *t = getenv("LARECOMP_UPDATE_TAGS")) {  // (test) "beta_2,v1.0.0": these releases, no network
         for (const char *p = t; *p;) {
@@ -271,7 +271,7 @@ static void *upd_thread(void *) {
         if (!p || plat_proc_wait(p, true) != 0) return upd_fail("the zip couldn't be unpacked"), (void *)NULL;
     }
     fs::path src = u8p(work) / u8p("PokeL-ARecomp");
-    if (!fs::exists(src)) src = u8p(work) / u8p("ZA Recomp");
+    if (!fs::exists(src)) src = u8p(work) / u8p("PokeL-ARecomp");
     if (!fs::exists(src / "PokeL-ARecomp.exe") && !fs::exists(src / "lasrecomp.exe")) return upd_fail("the zip isn't a PokeL-ARecomp release"), (void *)NULL;
     g_upd_state = UPD_INSTALL;
     // every file first: a half-moved update would mix two versions - moves only once the list is complete
@@ -421,16 +421,16 @@ static const char *fail_head(int k, bool pt) {
 static const char *fail_hint(int k, bool pt) {
     static const char *const en[] = {
         "",
-        "Choose the folder with your Pok\xc3\xa9mon Legends Z-A game extracted (exefs and romfs folders), or with your "
+        "Choose the folder with your Pok\xc3\xa9mon Legends: Arceus game extracted (exefs and romfs folders), or with your "
         "dump (.xci / .nsp) and your prod.keys.",
-        "Pok\xc3\xa9mon Legends Z-A's base game isn't among those files. Choose the folder with your own dump.",
+        "Pok\xc3\xa9mon Legends: Arceus's base game isn't among those files. Choose the folder with your own dump.",
         "Make sure there's about 12 GB free and try again.",
         "PokeL-ARecomp runs version 1.1.1 of the game (base game + the 1.1.1 / v262144 update).",
         "Some files are missing. Choose the folder again; if it happens again, dump the game again.",
         "Make sure there's about 4 GB free and try again. If it keeps happening, report it on GitHub.",
         "Put the prod.keys (and title.keys) dumped from your own Switch in the folder with the game files. Any file "
         "name works (prod.keys.txt, keys.txt...): it is recognized by what is inside it.",
-        "The full reason is in lasrecomp.log next to the program."};
+        "The full reason is in logs/lasrecomp.log, in the program's folder."};
     static const char *const ptb[] = {
         "",
         "Escolha a pasta com o seu Pokémon Legends: Arceus extraído (pastas exefs e romfs), ou com o seu dump (.xci / .nsp) "
@@ -442,7 +442,7 @@ static const char *fail_hint(int k, bool pt) {
         "Veja se há uns 4 GB livres e tente de novo. Se continuar, avise no GitHub.",
         "Coloque o prod.keys (e o title.keys) do seu próprio Switch na pasta dos arquivos do jogo. Qualquer nome serve "
         "(prod.keys.txt, keys.txt...): ele é reconhecido pelo conteúdo.",
-        "O motivo completo está no lasrecomp.log, ao lado do programa."};
+        "O motivo completo está em logs/lasrecomp.log, na pasta do programa."};
     return k >= 1 && k <= 8 ? (pt ? ptb : en)[k] : "";
 }
 static void set_failure(int k, const std::string &detail = "") {
@@ -1905,6 +1905,40 @@ static bool menu_tip(float s) {
     return go;
 }
 
+// Full screen or a window? Asked at every PLAY (2026-11-19: the game always went full screen, and the start screen's
+// picture stayed in a corner of the black full screen while the game booted), until "Don't ask again" - then the
+// choice stays (fullscreen in larecomp.ini; F1 > Video changes it, Alt+Enter too). The window takes the choice here,
+// before the game starts, so the switch happens once.
+static bool screen_prompt(float s) {
+    bool go = false;
+    if (begin_question("##screenmode", s)) {
+        static bool dont_ask;
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextUnformatted(TR("How do you want to play?", "Como você quer jogar?"));
+        ImGui::PopTextWrapPos();
+        ImGui::Dummy(ImVec2(0, 10 * s));
+        float bw = 200 * s, gap = 16 * s;
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 2 * bw - gap) * 0.5f);
+        int pick = -1;
+        if (g_settings.fullscreen) ImGui::SetItemDefaultFocus();
+        if (ImGui::Button(TR("Full screen", "Tela cheia"), ImVec2(bw, 48 * s))) pick = 1;
+        ImGui::SameLine(0, gap);
+        if (!g_settings.fullscreen) ImGui::SetItemDefaultFocus();
+        if (ImGui::Button(TR("Window", "Janela"), ImVec2(bw, 48 * s))) pick = 0;
+        ImGui::Dummy(ImVec2(0, 8 * s));
+        ImGui::Checkbox(TR("Don't ask again (F1 > Video changes it)", "Não perguntar de novo (F1 > Vídeo muda isso)"), &dont_ask);
+        if (pick >= 0) {
+            g_settings.fullscreen = pick;
+            g_settings.screen_mode_set = dont_ask;
+            settings_save();
+            ImGui::CloseCurrentPopup();
+            go = true;
+        }
+        ImGui::EndPopup();
+    }
+    return go;
+}
+
 // Controllers, as in the in-game menu (runtime/ui/menu.mm): read straight from SDL, confirm / back as the Controls
 // tab's Confirm button says (pad_nav.h: the game's layout, or the controller's convention); d-pad / left stick move;
 // L / R change pages. (ImGui's own SDL gamepad handling is switched off.)
@@ -2832,7 +2866,10 @@ extern "C" void launcher_run(const char *root) {
                         pthread_detach(t);
                     }
                     float cur_x = x + setup_w + 16;
-                    if (!rebuild) {
+                    // The standalone extractor (tools/PokeL-Extractor) is set aside for now: not built, not shipped, no
+                    // button (2026-11-19). The start screen's own setup (extract_thread) reads .nsp / .xci directly.
+                    // LARECOMP_SHOW_EXTRACTOR=1: the button again (for a copy of PokeL-Extractor.exe next to the app).
+                    if (!rebuild && getenv("LARECOMP_SHOW_EXTRACTOR")) {
                         const char *ext_txt = TR("Extract ROM (PokeL-Extractor)", "Extrair ROM (PokeL-Extractor)");
                         float ext_w = text_size(F_LABEL, 16, ext_txt).x + 2 * (54 * 0.42f) + (16 * 1.15f + 16 * 1.15f * 0.55f);
                         if (button("##extractor", ext_txt, cur_x, ty, ext_w, 54, BTN_SECONDARY, true, IC_FOLDER, F_LABEL, 16)) {
@@ -2911,20 +2948,21 @@ extern "C" void launcher_run(const char *root) {
                         if (offer_video) ImGui::OpenPopup("##videorec");
                         else if (!g_settings.aspect_asked) ImGui::OpenPopup("##aspect");
                         else if (!g_settings.menu_tip_seen) ImGui::OpenPopup("##menutip");
-                        else play = true;
+                        else if (!g_settings.screen_mode_set) ImGui::OpenPopup("##screenmode"); else play = true;
                     }
                     if (g_tip_test) ImGui::OpenPopup(g_settings.aspect_asked ? "##menutip" : "##aspect"), g_tip_test = false;
                     if (g_video_test && g_video_rec.known) ImGui::OpenPopup("##videorec"), g_video_test = false;
                     if (video_prompt(s)) {
                         if (!g_settings.aspect_asked) ImGui::OpenPopup("##aspect");
                         else if (!g_settings.menu_tip_seen) ImGui::OpenPopup("##menutip");
-                        else play = true;
+                        else if (!g_settings.screen_mode_set) ImGui::OpenPopup("##screenmode"); else play = true;
                     }
                     if (aspect_prompt(s)) {
-                        if (g_settings.menu_tip_seen) play = true;
+                        if (g_settings.menu_tip_seen) { if (!g_settings.screen_mode_set) ImGui::OpenPopup("##screenmode"); else play = true; }
                         else ImGui::OpenPopup("##menutip");
                     }
-                    if (menu_tip(s)) play = true;
+                    if (menu_tip(s)) { if (!g_settings.screen_mode_set) ImGui::OpenPopup("##screenmode"); else play = true; }
+                    if (screen_prompt(s)) play = true;
                 }
             }
 
@@ -3475,9 +3513,10 @@ extern "C" void launcher_run(const char *root) {
     // play: hand the window to the game
     settings_save();
     xbox_layout_before_play();
-    if (g_settings.fullscreen) {
-        SDL_SetWindowFullscreen((SDL_Window *)win, true);
-    }
+    // (full screen is not switched on here: nothing redraws the window until the game's first frame, so the start
+    // screen's last picture sat in the top-left corner of a black full screen - user screenshot 2026-11-19. The game
+    // applies it with its first frame: runtime/ui/menu.mm menu_apply_window_requests)
+    (void)win;
 #ifdef __APPLE__
     ImGui_ImplMetal_Shutdown();
 #else

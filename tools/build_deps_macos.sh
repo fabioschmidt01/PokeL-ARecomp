@@ -38,12 +38,14 @@ if [ ! -f "$P/lib/libSDL3.0.dylib" ]; then
     cmake --build "$S/sdl/build" -j"$JOBS" && cmake --install "$S/sdl/build"
 fi
 
-if [ ! -f "$P/lib/libavcodec.dylib" ]; then
+if [ ! -f "$P/lib/libavcodec.dylib" ] || [ ! -f "$P/lib/libswresample.dylib" ]; then
+    # (swresample on: FFmpeg's Opus decoder depends on it - without it configure dropped the decoder silently, and the
+    # game's music, decoded through hwopus (runtime/services/opus.c), had none: issue #17)
     unpack ffmpeg-9.0.2.tar.xz ffmpeg
     (cd "$S/ffmpeg" && ./configure --prefix="$P" --cc=clang --arch=arm64 --enable-shared --disable-static \
         --extra-cflags="-mmacosx-version-min=$MIN" --extra-ldflags="-mmacosx-version-min=$MIN" \
         --disable-autodetect --disable-programs --disable-doc --disable-network --disable-avdevice --disable-avfilter \
-        --disable-swresample --disable-everything \
+        --disable-everything \
         --enable-protocol=file --enable-demuxer=matroska,mov \
         --enable-decoder=vp9,vp8,vorbis,opus,h264,aac --enable-parser=vp9,vp8,vorbis,opus,h264,aac \
         --install-name-dir='@rpath' && make -j"$JOBS" && make install)

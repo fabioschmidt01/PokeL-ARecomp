@@ -84,6 +84,44 @@ static void mkdirs(const char *path) {
     mkdir(p, 0755);
 }
 
+// The button icons the release ships (textures/prompts: relabelled icons and their romfs overlays, read relative to the
+// data folder by runtime/nvn/vulkan/textures.c, services/fs.c, hle/pl.c) are next to the executable. On Windows that is
+// the data folder; the Linux AppImage's data folder is elsewhere (and the image is mounted at a new path every run), so
+// Xbox / PlayStation icons never showed there - the game's own Switch letters instead. Copied into the data folder:
+// every shipped file that is missing there or has another size (a new release's), nothing else touched (what the
+// start screen's helper writes next to them stays). Same folder (Windows, a source checkout): nothing to do.
+static void copy_tree_missing(const char *src, const char *dst, int *copied) {
+    DIR *d = opendir(src);
+    if (!d) return;
+    mkdirs(dst);
+    for (struct dirent *de; (de = readdir(d));) {
+        if (de->d_name[0] == '.') continue;
+        char s[1100], t[1100];
+        snprintf(s, sizeof s, "%s" SEP "%s", src, de->d_name);
+        snprintf(t, sizeof t, "%s" SEP "%s", dst, de->d_name);
+        struct stat ss, ts;
+        if (stat(s, &ss)) continue;
+        if (S_ISDIR(ss.st_mode)) { copy_tree_missing(s, t, copied); continue; }
+        if (!stat(t, &ts) && ts.st_size == ss.st_size) continue;
+        FILE *in = fopen(s, "rb"), *out = in ? fopen(t, "wb") : NULL;
+        char buf[65536];
+        size_t k;
+        while (out && (k = fread(buf, 1, sizeof buf, in)) > 0) fwrite(buf, 1, k, out);
+        if (in) fclose(in);
+        if (out) fclose(out), (*copied)++;
+    }
+    closedir(d);
+}
+static void sync_bundled_prompts(void) {
+    char src[1100], a[1100], b[1100];
+    if (!rt_resource("textures" SEP "prompts", NULL, src, sizeof src) || !is_dir(src)) return;
+    mkdirs("textures");
+    if (resolve(src, a, sizeof a) && resolve("textures" SEP "prompts", b, sizeof b) && !strcmp(a, b)) return;
+    int copied = 0;
+    copy_tree_missing(src, "textures" SEP "prompts", &copied);
+    if (copied) fprintf(stderr, "[paths] button icons: %d file(s) copied from %s\n", copied, src);
+}
+
 static bool writable(const char *dir) {
     char t[1100];
     snprintf(t, sizeof t, "%s" SEP ".write_test", dir);
@@ -301,12 +339,12 @@ void rt_paths_init(void) {
         while (pointer_root(g_home, ptr, sizeof ptr)) {  // another folder chosen on the start screen
             if (is_dir(ptr) && writable(ptr)) { snprintf(root, sizeof root, "%s", ptr); break; }
             char msg[1400];
-            snprintf(msg, sizeof msg, "LAS Recomp's data folder isn't available:\n%s\n\nIf it's on a drive that isn't "
+            snprintf(msg, sizeof msg, "PokeL-ARecomp's data folder isn't available:\n%s\n\nIf it's on a drive that isn't "
                      "connected, connect it and try again.", ptr);
             const SDL_MessageBoxButtonData b[] = {{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 0, "Try again"},
                                                   {0, 1, "Use the default folder"},
                                                   {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 2, "Quit"}};
-            const SDL_MessageBoxData box = {SDL_MESSAGEBOX_WARNING, NULL, "LAS Recomp", msg, 3, b, NULL};
+            const SDL_MessageBoxData box = {SDL_MESSAGEBOX_WARNING, NULL, "PokeL-ARecomp", msg, 3, b, NULL};
             int k = 2;
             if (!SDL_ShowMessageBox(&box, &k)) fprintf(stderr, "%s\n", msg);
             if (k == 2) exit(1);
@@ -346,6 +384,7 @@ void rt_paths_init(void) {
         if (in) fclose(in);
         if (out) fclose(out), fprintf(stderr, "[paths] first run: the release's settings from %s\n", def);
     }
+    sync_bundled_prompts();
 }
 
 const char *rt_data_root(void) { return g_root; }
@@ -544,7 +583,7 @@ void rt_data_target(const char *picked, RtDataTarget *t) {
     // the folder itself when it's empty, LAS Recomp's data, or the platform's folder; otherwise a "LAS Recomp"
     // folder in it
     if (same_dir(r, g_home) || usable_dir(r)) snprintf(t->path, sizeof t->path, "%s", r);
-    else join(t->path, sizeof t->path, r, "LAS Recomp");
+    else join(t->path, sizeof t->path, r, "PokeL-ARecomp");
     join(p, sizeof p, t->path, MARK_PARTIAL);
     t->has_data = has_entries(t->path) && !exists(p);
     t->bytes = entries_size(g_root);
@@ -556,7 +595,7 @@ void rt_data_target(const char *picked, RtDataTarget *t) {
     else if (within(t->path, root)) snprintf(t->refuse, sizeof t->refuse, "That folder is inside the data folder.");
     else if (within(root, t->path)) snprintf(t->refuse, sizeof t->refuse, "That folder holds the data folder.");
     else if (in_app(r)) snprintf(t->refuse, sizeof t->refuse, "That folder is inside the app.");
-    else if (!writable(r)) snprintf(t->refuse, sizeof t->refuse, "LAS Recomp can't write to that folder.");
+    else if (!writable(r)) snprintf(t->refuse, sizeof t->refuse, "PokeL-ARecomp can't write to that folder.");
     else if (!same_dir(t->path, g_home) && !usable_dir(t->path))
         snprintf(t->refuse, sizeof t->refuse, "Choose an empty folder.");
 }
@@ -718,7 +757,7 @@ static bool prepare_target(const char *to, char *err, size_t n) {
     char p[1100];
     mkdirs(to);
     if (!is_dir(to) || !writable(to)) {
-        snprintf(err, n, "LAS Recomp can't write to %s.", to);
+        snprintf(err, n, "PokeL-ARecomp can't write to %s.", to);
         return false;
     }
     join(p, sizeof p, to, MARK_PARTIAL);
@@ -749,7 +788,7 @@ bool rt_data_move(const char *to, void (*progress)(int step, double frac), char 
         return false;
     }
     if (has_entries(abs_to)) {
-        snprintf(err, n, "That folder already has LAS Recomp data.");
+        snprintf(err, n, "That folder already has PokeL-ARecomp data.");
         return false;
     }
     Move m = {progress, 0, entries_size(from), 0, err, n, malloc(MOVE_BUF), malloc(MOVE_BUF)};

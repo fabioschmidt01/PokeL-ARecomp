@@ -959,7 +959,7 @@ static pthread_mutex_t jobs_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t jobs_cond = PTHREAD_COND_INITIALIZER;
 // when each thread's current job started (0: idle) - wait_built says which one a stalled draw is stuck behind
 #define MAX_WORKERS 16
-static _Atomic uint64_t worker_t0[MAX_WORKERS], translator_t0;
+static _Atomic uint64_t worker_t0[MAX_WORKERS + 1], translator_t0;  // (+1: the urgent builds, run_queued_now)
 static _Atomic int nworkers;
 static _Atomic uint64_t builds_done;  // (shaders / pipelines built, all session: renderer_shader_builds)
 // Shader work for runtime/hle/framepace.c (seconds spent building shaders don't count against 60 fps): the builds
@@ -971,8 +971,13 @@ uint64_t renderer_shader_builds(void) {
     return n;
 }
 
+static __thread int t_worker = -1;   // (this thread's worker slot; -1: not a worker. vk_compile_abandon)
+static __thread bool t_prep_job;     // (a shader preparation job: counted in prep_pending)
+static __thread _Atomic int *t_build_state;  // (the Pipe being built: its state)
+static __thread int t_build_slot;
 static void *worker(void *a) {
     int me = (int)(intptr_t)a;
+    t_worker = me;
     for (;;) {
         pthread_mutex_lock(&jobs_lock);
         while (!jobs_head) pthread_cond_wait(&jobs_cond, &jobs_lock);
@@ -1058,7 +1063,7 @@ static void run_job(void (*fn)(void *), void *arg, _Atomic int *state) {
 // of them (over a second, a frozen frame). false: not queued (running, or done).
 // The queued job building state, taken out of its queue (take) or moved to its front, for the next free thread: a draw
 // skipped for it (wait_scene) gets it in a build or two, not after every build queued before it.
-static Job *queued_job(_Atomic int *state, bool take) {
+static Job *queued_job(_Atomic int *state, bool take, int *queue) {
     for (int q = 0; q < 2; q++) {
         pthread_mutex_t *lock = q ? &jobs_lock : &tjobs_lock;
         Job **head = q ? &jobs_head : &tjobs_head, **tail = q ? &jobs_tail : &tjobs_tail, *prev = NULL;
@@ -1072,17 +1077,39 @@ static Job *queued_job(_Atomic int *state, bool take) {
                 if (!take) j->next = *head, *head = j;
             }
             pthread_mutex_unlock(lock);
+            if (queue) *queue = q;
             return j;
         }
         pthread_mutex_unlock(lock);
     }
     return NULL;
 }
-static bool run_queued_now(_Atomic int *state) {
-    Job *j = queued_job(state, true);
-    if (!j) return false;
+// A build taken out of the workers' queue runs on a thread of its own, not the render thread: the driver's compiler can
+// crash on a pipeline (#93, #251: AMD R7 360, 22.6.1, amdvlk64.dll+885a8 on a full-screen pass's pipeline), and a build
+// thread is left where it is while the game goes on without that pipeline (vk_compile_crash_recover) - the render
+// thread can't be, so the crash dialog came instead, a run after run with one more pipeline listed each time. The
+// draw waits on the build's state as before (wait_built polls it), so it costs a thread start (~0.1 ms). Translations
+// (the first queue) are ours, not the driver's: still run here.
+static void *urgent_build(void *a) {
+    Job *j = a;
+    t_worker = MAX_WORKERS;  // (vk_compile_abandon: a build thread, not one to start again)
+    atomic_store(&worker_t0[MAX_WORKERS], SDL_GetTicksNS());
     j->fn(j->arg);
+    atomic_store(&worker_t0[MAX_WORKERS], 0);
     free(j);
+    return NULL;
+}
+static bool run_queued_now(_Atomic int *state) {
+    int q = 0;
+    Job *j = queued_job(state, true, &q);
+    if (!j) return false;
+    pthread_t t;
+    pthread_attr_t at;
+    pthread_attr_init(&at);
+    pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+    bool own = q == 1 && pthread_create(&t, &at, urgent_build, j) == 0;
+    pthread_attr_destroy(&at);
+    if (!own) { j->fn(j->arg); free(j); }  // (a translation, or no thread to be had)
     return true;
 }
 
@@ -2044,10 +2071,12 @@ typedef struct {
     bool vs_uses_vid;
     _Atomic int state;  // 0 building, 1 ready, 2 failed
     uint64_t prep_vh, prep_fh;  // (prepared programs: their code hashes, for LARECOMP_PREP_CHECK)
+    uint64_t hash[2];           // the stages' code hashes (a compiler crash names them: device.c vk_compile_crash_note)
     ShaderFp fp[2];             // (stale-program detector, shader_prep.h; compute: [0]; touched by the replay only)
     struct PipeMemo *pmemo;     // (render thread) draw_'s pipeline key memo for this program
     bool reuse;                 // set reuse (stage_set): some uniform buffers are dynamic, sets are kept while their contents repeat
     struct SetCache *scache[2]; // (render thread) stage_set's last set per set index
+    struct PrepPipe *prep_wait; // (shader preparation, under prep_lock) its records' pipelines, queued once it is built
 } Prog;
 
 // ---- descriptor set reuse (graphics programs; port of vk-draw-cpu-2 d50bbce)
@@ -2218,13 +2247,16 @@ static inline const GWin *gwin(void) {
 static uint64_t gwin_want(void) { return gwin()->phys ? gwin_.max : kernel_heap_size(); }
 
 static void gmem_window_get(uint64_t *lo, uint64_t *len);  // (the guest-heap import window, below)
-// Translates both stages (false: failed, logged). Holds the translator for the whole program.
-static bool translate_program_now(Prog *p) {
+// The translator's window for this thread's next translations (translate.c: per thread, upstream 9dabc93)
+static void translate_globals_set(void) {
     uint64_t wl, wn;
     gmem_window_get(&wl, &wn);
-    pthread_mutex_lock(&translate_lock);  // (the globals too: the render thread translates as well - run_queued_now)
     maxwell_gmem_base = gwin_base + wl, maxwell_gmem_size = wn;
     maxwell_gmem_chunk_shift = gmem_chunk_shift();
+}
+// Translates both stages (false: failed, logged)
+static bool translate_program_now(Prog *p) {
+    translate_globals_set();
     p->vi = maxwell_translate((const uint8_t *)(uintptr_t)p->code[0], p->cmax[0], STAGE_VERTEX, &p->vkey);
     if (p->vi->msl) {
         p->fkey.vs_out_mask = p->vi->out_mask;
@@ -2247,7 +2279,6 @@ static bool translate_program_now(Prog *p) {
             }
         }
     }
-    pthread_mutex_unlock(&translate_lock);
     if (!p->vi->msl) {
         LOG("[shader] VS translate failed: %s (code %llx)\n", p->vi->error, (unsigned long long)p->code[0]);
         atomic_store(&p->state, 2);
@@ -2264,7 +2295,10 @@ static bool translate_program_now(Prog *p) {
 
 static void translate_program(void *arg) {
     Prog *p = arg;
-    if (!translate_program_now(p)) return;
+    pthread_mutex_lock(&translate_lock);  // (the render thread translates as well - run_queued_now)
+    bool ok = translate_program_now(p);
+    pthread_mutex_unlock(&translate_lock);
+    if (!ok) return;
     save_glsl(p->vi->msl, p->code[0], "vs");
     save_glsl(p->fi->msl, p->code[1], "fs");
     run_job(compile_program, p, &p->state);
@@ -2448,6 +2482,7 @@ static Prog *get_program_(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey) {
         shader_first_visit("program", vh, fh, ck);
     }
     Prog *p = calloc(1, sizeof *p);
+    p->hash[0] = shader_stage_hash(&np->stages[0]), p->hash[1] = shader_stage_hash(&np->stages[1]);
     prog_fp_check(p, np);  // (takes the fingerprint)
     kv_set(&prog_kv, slot, h, p);
     note_code(&np->stages[0], fp[0], "vs");
@@ -2900,13 +2935,35 @@ static void pipe_ci_fill(PipeCI *c, const PipeKey *k) {
 static void build_pipeline(void *arg) {
     Pipe *pp = arg;
     PipeKey *k = &pp->k;
+    extern bool vk_shader_bad(uint64_t vs, uint64_t fs);  // (device.c: this driver's compiler crashes on these: never asked again)
+    if (vk_shader_bad(k->prog->hash[0], k->prog->hash[1])) {
+        atomic_fetch_add(&builds_done, 1);
+        atomic_store(&pp->state, 2);
+        return;
+    }
     PipeCI c;
     pipe_ci_fill(&c, k);
     uint64_t t0 = SDL_GetTicksNS();
     int bs = build_begin("pipeline vs/fs", k->prog->code[0] ? k->prog->code[0] : k->prog->prep_vh,
                          k->prog->code[1] ? k->prog->code[1] : k->prog->prep_fh);
     SLOW_FEEDBACK(c.pi);
+    extern bool g_vk_no_opt;  // (device.c vk_bad_code_note: this driver's optimizer gave the GPU invalid instructions)
+    extern __thread uint64_t t_build_vs, t_build_fs;
+    if (g_vk_no_opt) c.pi.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
+    t_build_vs = k->prog->hash[0], t_build_fs = k->prog->hash[1];
+    t_build_state = &pp->state, t_build_slot = bs;
+    {   // (test) LARECOMP_TEST_COMPILE_CRASH=<n>: the n-th pipeline fails as a compiler crash would
+        static _Atomic long left = -1;
+        long e = -1;
+        if (atomic_compare_exchange_strong(&left, &e, ENV("LARECOMP_TEST_COMPILE_CRASH") ? atol(ENV("LARECOMP_TEST_COMPILE_CRASH")) : 0)) {}
+        if (atomic_load(&left) > 0 && atomic_fetch_sub(&left, 1) == 1) *(volatile int *)(uintptr_t)8 = 1;
+        static _Atomic int urgent_once;  // LARECOMP_TEST_COMPILE_CRASH_URGENT=1: the first build a draw waits on (#251)
+        if (t_worker == MAX_WORKERS && ENV("LARECOMP_TEST_COMPILE_CRASH_URGENT") && !atomic_exchange(&urgent_once, 1))
+            *(volatile int *)(uintptr_t)8 = 1;
+    }
     VkResult r = vkCreateGraphicsPipelines(g_vk.dev, g_vk.pcache, 1, &c.pi, NULL, &pp->pipe);
+    t_build_vs = t_build_fs = 0;
+    t_build_state = NULL;
     SLOW_FEEDBACK_HIT();
     build_end(bs);
     if (r != VK_SUCCESS) {
@@ -2917,6 +2974,21 @@ static void build_pipeline(void *arg) {
     atomic_fetch_add(&builds_done, 1);
     atomic_store(&pp->state, r == VK_SUCCESS ? 1 : 2);
     slow_build(t0, "pipeline vs/fs", k->prog->code[0], k->prog->code[1]);
+}
+
+// The driver's compiler crashed under this thread's build_pipeline (device.c vk_compile_crash_recover): what the rest of the job
+// and the worker's loop would have done, and another worker in its place. The caller then never returns to the driver.
+bool vk_compile_abandon(void) {
+    if (t_worker < 0 || !t_build_state) return false;
+    build_end(t_build_slot);
+    atomic_fetch_add(&builds_done, 1);
+    atomic_store(t_build_state, 2);
+    if (t_prep_job) prep_pending--;
+    atomic_store(&worker_t0[t_worker], 0);
+    pthread_t t;
+    if (t_worker < MAX_WORKERS) pthread_create(&t, NULL, worker, (void *)(intptr_t)t_worker);  // (an urgent build's: none)
+    t_worker = -1;
+    return true;
 }
 
 // Dynamic vertex input (g_vk.vids): the draw's layout, as build_pipeline would bake it in
@@ -3204,7 +3276,7 @@ static uint32_t fsr2_scene_w, fsr2_scene_h;  // (the scene depth's size: mv_note
 static bool fsr2_wanted(void) {  // (F1 > Video > Temporal anti-aliasing; LARECOMP_FSR2=0 / 1 overrides it)
     static int env = -2;
     if (env == -2) env = ENV("LARECOMP_FSR2") ? atoi(ENV("LARECOMP_FSR2")) != 0 : -1;
-    return env >= 0 ? env : g_settings.taa;
+    return env >= 0 ? env : g_settings.taa != 0;
 }
 static void fsr2_frame_jitter(void) {
     extern uint64_t vk_frame_counter(void);
@@ -3214,7 +3286,7 @@ static void fsr2_frame_jitter(void) {
     fsr2_jx = fsr2_jy = 0;
     if (!fsr2_wanted() || !fsr2_scene_w || fsr2_ok_frame + 1 != f) return;
     static uint32_t index;
-    vk_fsr2_jitter(index++, fsr2_scene_w, fsr2_scene_w, &fsr2_jx, &fsr2_jy);
+    (g_settings.taa == 2 ? vk_fsr3_jitter : vk_fsr2_jitter)(index++, fsr2_scene_w, fsr2_scene_w, &fsr2_jx, &fsr2_jy);
 }
 // The 3D scene's passes take the jitter: those drawing with the scene's depth (a scalable, non-square depth target
 // at its level 0) - not the shadow maps, the depth pyramid's levels, the full-screen passes or the HUD
@@ -3266,7 +3338,12 @@ static void mv_note_draw(Prog *pr) {
     if (fabsf(a0 * b5 - a1 * b4 + a2 * b3 + a3 * b2 - a4 * b1 + a5 * b0) < 1e-9f) return;
     mv_frame[1] = mv_frame[0], memcpy(mv_vp[1], mv_vp[0], sizeof mv_vp[0]);
     mv_frame[0] = f, memcpy(mv_vp[0], m, sizeof mv_vp[0]);
-    if (g_settings.fov >= FOV_MIN && g_settings.fov <= FOV_MAX && g_settings.fov != FOV_DEFAULT) {
+    // (only with the old field of view - LARECOMP_FOV_UBO=1, the camera's buffer rescaled afterwards. Since v0.26.7 the
+    // game's own projection is built wider (hle/widescreen.c rt_pla_proj_aspect): this matrix has it already, and
+    // scaling it again made every motion vector wrong at fov != 60 - FSR's picture grainy while moving, 2026-11-21)
+    static int fov_ubo = -1;
+    if (fov_ubo < 0) fov_ubo = ENV("LARECOMP_FOV_UBO") && atoi(ENV("LARECOMP_FOV_UBO")) != 0;
+    if (fov_ubo && g_settings.fov >= FOV_MIN && g_settings.fov <= FOV_MAX && g_settings.fov != FOV_DEFAULT) {
         float fov_scale = tanf(30.0f * (float)M_PI / 180.0f) / tanf(((float)g_settings.fov * 0.5f) * (float)M_PI / 180.0f);
         for (int i = 0; i < 8; i++) mv_vp[0][i] *= fov_scale;
     }
@@ -5965,7 +6042,28 @@ static void build_compute(void *arg) {
                                                 .pSpecializationInfo = &spec},
                                       .layout = cp->p.layout};
     SLOW_FEEDBACK(ci);
+    extern bool g_vk_no_opt;
+    if (g_vk_no_opt) ci.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
+    // A driver's compiler can crash on one compute shader too (DirectX 12: deep in vulkan_dzn during the startup
+    // preparation): marked like the graphics builds (t_build_*: device.c vk_compile_crash_recover - this worker is
+    // given up, the game goes on, cache/gpu_bad_shaders), by its GLSL's hash and "cs" in place of a fragment shader
+    const uint64_t cs_mark = 0x6373;
+    uint64_t gh = 1469598103934665603ull;
+    for (const char *q = cp->si->msl; *q; q++) gh = (gh ^ (uint8_t)*q) * 1099511628211ull;
+    extern bool vk_shader_bad(uint64_t vs, uint64_t fs);
+    if (vk_shader_bad(gh, cs_mark)) {
+        LOG("[compute] cs %llx: skipped (the driver's compiler crashed on it before)\n", (unsigned long long)cp->code);
+        vkDestroyShaderModule(g_vk.dev, m, NULL);
+        atomic_store(&cp->p.state, 2);
+        build_end(bs);
+        return;
+    }
+    extern __thread uint64_t t_build_vs, t_build_fs;
+    t_build_vs = gh, t_build_fs = cs_mark;
+    t_build_state = &cp->p.state, t_build_slot = bs;
     VkResult r = vkCreateComputePipelines(g_vk.dev, g_vk.pcache, 1, &ci, NULL, &cp->pipe);
+    t_build_vs = t_build_fs = 0;
+    t_build_state = NULL;
     SLOW_FEEDBACK_HIT();
     atomic_fetch_add(&stat_compiles, 1);
     atomic_fetch_add(&builds_done, 1);
@@ -6063,7 +6161,9 @@ static CsProg *compute_program(NvnProgram *np) {
 typedef struct { void (*fn)(void *); void *arg; } PrepJob;
 static void prep_job_run(void *a) {
     PrepJob *j = a;
+    t_prep_job = true;
     j->fn(j->arg);
+    t_prep_job = false;
     free(j);
     prep_pending--;
 }
@@ -6075,6 +6175,7 @@ static void prep_job(void (*fn)(void *), void *arg) {
 }
 
 static _Atomic int prep_pipe_dups;  // records whose pipeline another record already made
+static _Atomic int prep_tr_failed;  // programs whose translation failed (prep_translate)
 // (Pokémon Z-A: only once the game has set up its physical memory window - the translations bake its base and size
 // in, and before that it's Link's Awakening's heap: the start screen's preparation would have made every program with
 // the wrong one. Z-A's runs at its start instead, shader_prep.c shader_prep_boot)
@@ -6091,19 +6192,19 @@ void renderer_prepare_end(void) {
         pthread_mutex_lock(&prep_lock);
         size_t n = prep_pipes_n;
         pthread_mutex_unlock(&prep_lock);
-        LOG("[vk] prepared %zu pipelines (%d records shared one, vertex input %s)\n", n, atomic_load(&prep_pipe_dups),
-            g_vk.vids ? "dynamic" : "in each pipeline");
+        LOG("[vk] prepared %zu pipelines (%d records shared one, vertex input %s; %d programs failed to translate)\n", n,
+            atomic_load(&prep_pipe_dups), g_vk.vids ? "dynamic" : "in each pipeline", atomic_load(&prep_tr_failed));
         if (g_vk.gpl_probe) gpl_probe();
     }
 }
 
-typedef struct { Pipe *pp; ShaderRec r; } PrepPipe;
+typedef struct PrepPipe { Pipe *pp; ShaderRec r; struct PrepPipe *next; } PrepPipe;
 static void prep_pipeline(void *arg) {
     PrepPipe *a = arg;
     Prog *pr = a->pp->k.prog;
     // its program's compile was queued before (the queue is first in, first out): wait for it to finish
     while (atomic_load(&pr->state) == 0) { struct timespec ts = {0, 1000000}; nanosleep(&ts, NULL); }
-    if (atomic_load(&pr->state) != 1) { atomic_store(&a->pp->state, 2); free(a); return; }
+    if (atomic_load(&pr->state) != 1) { free(a->pp); free(a); return; }  // (its program failed: queued only once built)
     const ShaderRec *r = &a->r;
     // the pass's attachment formats as begin_pass makes them for these targets
     VkFormat color[8] = {0}, depth = VK_FORMAT_UNDEFINED, stencil = VK_FORMAT_UNDEFINED;
@@ -6138,6 +6239,23 @@ static void prep_pipeline(void *arg) {
     free(a);
 }
 
+// A prepared program translated and compiled on a worker (upstream 9dabc93): on the preparing thread alone a first
+// start translated ~2000 programs one by one (most of a 40 s cold start, PLA 2026-11-19). Its records' pipelines wait
+// on it (prep_wait) and are queued once it is built, so no worker waits for another.
+static void prep_translate(void *arg) {
+    Prog *p = arg;
+    bool ok = translate_program_now(p);
+    free((void *)(uintptr_t)p->code[0]), free((void *)(uintptr_t)p->code[1]);
+    p->code[0] = p->code[1] = 0;
+    if (ok) compile_program(p);
+    else atomic_fetch_add(&prep_tr_failed, 1);
+    pthread_mutex_lock(&prep_lock);  // (its state is set: renderer_prepare queues later records itself)
+    PrepPipe *w = p->prep_wait;
+    p->prep_wait = NULL;
+    pthread_mutex_unlock(&prep_lock);
+    for (PrepPipe *n; w; w = n) n = w->next, prep_job(prep_pipeline, w);  // (a failed program's: freed there)
+}
+
 bool renderer_prepare(const ShaderRec *r, const ShaderBlob *vsb, const ShaderBlob *fsb) {
     if (r->kind == 'C') {
         uint64_t ck = cs_content_key(r->vs, r->local);
@@ -6162,25 +6280,32 @@ bool renderer_prepare(const ShaderRec *r, const ShaderBlob *vsb, const ShaderBlo
     Prog *p = PREP_GET(prep_progs, ck);
     if (!p) {
         p = calloc(1, sizeof *p);
-        p->code[0] = (uintptr_t)vsb->code;
-        p->code[1] = (uintptr_t)fsb->code;
         p->cmax[0] = vsb->const_offset ? vsb->const_offset : 0x10000;
         p->cmax[1] = fsb->const_offset ? fsb->const_offset : 0x10000;
         p->vkey = vkey;
         p->fkey = fkey;
         p->prep_vh = r->vs, p->prep_fh = r->fs;
-        bool ok = translate_program_now(p);
-        p->code[0] = p->code[1] = 0;  // (the game files' copies are gone after this call)
+        p->hash[0] = r->vs, p->hash[1] = r->fs;
+        // (the game files' copies are gone after this call: the job gets its own, with blob_read's zero padding)
+        for (int s = 0; s < 2; s++) {
+            const ShaderBlob *b = s ? fsb : vsb;
+            void *d = b->code ? malloc(b->size + 0x100) : NULL;
+            if (d) p->code[s] = (uintptr_t)memcpy(d, b->code, b->size + 0x100);
+        }
         PREP_PUT(prep_progs, ck, p);  // (failed ones too: the game then skips them as it would its own)
-        if (!ok) return false;
-        prep_job(compile_program, p);
+        prep_job(prep_translate, p);
     }
+    // (a translation that fails later counts as prepared here: renderer_prepare_end logs those)
     if (atomic_load(&p->state) == 2) return false;
     PrepPipe *a = calloc(1, sizeof *a);
     a->pp = calloc(1, sizeof *a->pp);
     a->pp->k.prog = p;
     a->r = *r;
-    prep_job(prep_pipeline, a);
+    pthread_mutex_lock(&prep_lock);
+    bool wait = atomic_load(&p->state) == 0;  // (still translating or compiling: prep_translate queues it)
+    if (wait) a->next = p->prep_wait, p->prep_wait = a;
+    pthread_mutex_unlock(&prep_lock);
+    if (!wait) prep_job(prep_pipeline, a);
     return true;
 }
 
@@ -6621,7 +6746,7 @@ static void fixed_state(FixedState *f, bool flip_x, bool flip_y, bool native, Vk
 // player's PC as a battle began), and the log says what the shader threads were doing. A full-screen draw runs its
 // own build if it's still queued (run_queued_now): it waits for that build, not for every one queued before it.
 static bool wait_scene(_Atomic int *state) {
-    if (atomic_load(state) == 0) queued_job(state, false);  // (its build next: skipped for a frame or two, not until
+    if (atomic_load(state) == 0) queued_job(state, false, NULL);  // (its build next: skipped for a frame or two, not until
                                                              // the whole queue is done; 2: failed, nothing queued)
     static double budget_ms = -1;
     if (budget_ms < 0) budget_ms = ENV("LARECOMP_VK_SCENE_WAIT_MS") ? atof(ENV("LARECOMP_VK_SCENE_WAIT_MS")) : 6;
@@ -6730,6 +6855,58 @@ static void vp_box_16_9(void) {
     vp_sx = vp_sy = u;
     vp_ox = (pw - st.rt.color[0]->width * u) * 0.5f;
     vp_oy = (ph - st.rt.color[0]->height * u) * 0.5f;
+}
+
+// HUD that follows the world (Pokémon Legends: Arceus, issue #15): the capture reticle around a Pokémon, the map
+// markers over places and the marks above them - placed by the game where its (wide) camera sees the thing, in the
+// HUD's 1920x1080 layout. The 16:9 box that keeps the rest of the HUD in shape put them at the box's same place instead:
+// at 32:9, half their distance from the centre. Such a pane keeps the box's size but sits where the wide picture has
+// its point. Told apart by their texture and pane size (the marks are digits and letters, a texture each, so not by
+// hash): the reticle's halves 200x200, the "!" over a Pokémon that saw you 56x136, the
+// speech bubble over one (46x80 drawn mirrored at 92x80, and its dots), the markers 82x82, their marks
+// 42x46 - no fixed HUD pane has these. A group (the
+// reticle's two mirrored halves; a marker and its marks, drawn after it) shares its first pane's shift, or the halves
+// would part and the marks spread. LARECOMP_WORLD_HUD=<hash>,...: more of them by texture; =0: off (all boxed);
+// LARECOMP_LOG_HUD=1: every HUD pane's texture and place, once each (to find them).
+static bool world_hud_pane(uint64_t h, const NvnTexture *t, const float *u) {
+    static uint64_t extra[16];
+    static int nextra = -1;
+    static bool off;
+    if (nextra < 0) {
+        nextra = 0;
+        const char *p = ENV("LARECOMP_WORLD_HUD");
+        off = p && !strcmp(p, "0");
+        for (; p && *p && !off && nextra < 16;) {
+            extra[nextra++] = strtoull(p, (char **)&p, 16);
+            while (*p == ',') p++;
+        }
+    }
+    if (off) return false;
+    for (int i = 0; i < nextra; i++) if (extra[i] == h) return true;
+    if (h == 0x7436866da8275efcull) return true;  // (the speech bubble's three dots, 16x16)
+    if (!t) return false;
+    unsigned w = t->width, ht = t->height;
+    if (w == 46 && ht == 80 && u[132] == 92 && u[133] == 80) return true;  // (the speech bubble over a Pokémon: a mirrored half)
+    if ((float)w != u[132] || (float)ht != u[133]) return false;  // (the texture drawn at its own size)
+    return (w == 200 && ht == 200) || (w == 82 && ht == 82) || (w == 42 && ht == 46) || (w == 56 && ht == 136);
+}
+// The box at a world pane's place: vp_box_16_9's scale, shifted so the pane's centre (or its group's first pane's)
+// lands where the reshaped target has it
+static void vp_box_world(const float *u) {
+    static uint64_t g_frame;
+    static float g_cx, g_cy, g_ox;
+    vp_box_16_9();
+    float w = u[132], h = u[133], l = u[134], t = u[135];
+    float x = l + w / 2, y = t - h / 2;
+    float X = u[16] * x + u[17] * y + u[19], Y = u[20] * x + u[21] * y + u[23];  // (the pane's centre, layout units)
+    float nx = u[0] * X + u[3];  // (the layout's orthographic projection: x row)
+    float cx = (nx + 1) * 0.5f * (float)st.rt.color[0]->width;  // (its centre, in the target's 1920-wide units)
+    uint64_t fr = renderer_present_count();
+    if (!(fr == g_frame && fabsf(X - g_cx) < 150 && fabsf(Y - g_cy) < 150)) {  // (a new group: placed by this pane)
+        g_ox = cx * (pass_sx - vp_sx);  // (the box's scale; cx lands at cx * pass_sx, its wide place)
+        g_frame = fr, g_cx = X, g_cy = Y;
+    }
+    vp_ox = g_ox;
 }
 
 static void draw_(CmdRec *r, bool indexed) {
@@ -7142,7 +7319,23 @@ static void draw_(CmdRec *r, bool indexed) {
         extern bool widescreen_ui_boxed(const float *u, uint64_t size);
         const float *u = (const float *)(uintptr_t)st.ubuf[0][0].addr;
         bool boxed = widescreen_ui_boxed(u, st.ubuf[0][0].size);
-        if (boxed) vp_box_16_9();
+        if (boxed) {
+            NvnTexture *t0 = st.ubuf[0][0].size == 560 && pr->fi->ntex ? shader_texture_object(1, &pr->fi->tex[0]) : NULL;
+            uint64_t th = t0 && t0->backend ? ((TexBackend *)t0->backend)->data_hash : 0;
+            if (st.ubuf[0][0].size == 560 && world_hud_pane(th, t0, u)) vp_box_world(u);
+            else vp_box_16_9();
+            if (th && ENV("LARECOMP_LOG_HUD")) {  // (each texture once: its place in the layout)
+                static uint64_t seen[256];
+                static int nseen;
+                bool known = false;
+                for (int i = 0; i < nseen; i++) if (seen[i] == th) known = true;
+                if (!known && nseen < 256) {
+                    seen[nseen++] = th;
+                    LOG("[hud] pane tex %016llx %ux%u at %.1f %.1f size %.0fx%.0f%s\n", (unsigned long long)th, t0->width,
+                        t0->height, u[19], u[23], u[132], u[133], world_hud_pane(th, t0, u) ? " (follows the world)" : "");
+                }
+            }
+        }
         if (g_debug_frame && (st.ubuf[0][0].size == 128 || st.ubuf[0][0].size == 560)) {  // (layout pane / font text)
             LOG("[draw]   ui %s %s: proj %g %g %g %g / %g %g %g %g", st.ubuf[0][0].size == 560 ? "pane" : "text",
                 boxed ? "boxed" : "not boxed", u[0], u[3], u[5], u[7], u[12], u[13], u[14], u[15]);
@@ -7426,8 +7619,19 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
         NvnTexture *t = shader_texture_object(1, &pr->fi->tex[i]);
         const TexBackend *b = t ? (const TexBackend *)t->backend : NULL;
         if (!t) { LOG("[draw]   tex%d: none\n", i); continue; }
-        LOG("[draw]   tex%d: %p %ux%u f%#x lv %u -> %ux%u scale %.4f %.4f%s\n", i, (void *)t, t->width, t->height, t->format,
+        LOG("[draw]   tex%d: %p %ux%u f%#x lv %u -> %ux%u scale %.4f %.4f%s", i, (void *)t, t->width, t->height, t->format,
             b ? b->levels : 0, b ? b->width : 0, b ? b->height : 0, b ? b->sx : 0, b ? b->sy : 0, b && b->scalable ? " scalable" : "");
+        {   // (the component swizzle: the texture's and its pool entry's view - 0 zero, 1 one, 2..5 r g b a)
+            int slot = ((int)pr->fi->tex[i].handle_offset - 0x20) / 8;
+            uint64_t h = (slot >= 0 && slot < 32) ? st.tex[1][slot] : 0;
+            const NvnTexEntry *e = st.tpool && (h & 0xFFFFF) < (uint64_t)st.tpool->count ? &((NvnTexEntry *)st.tpool->entries)[h & 0xFFFFF] : NULL;
+            LOG(" | hash %016llx | target %u depth %u layers %u | swz %u%u%u%u", b ? (unsigned long long)b->data_hash : 0ull,
+                t->target, t->depth, b ? b->layers : 0, t->swizzle[0], t->swizzle[1], t->swizzle[2], t->swizzle[3]);
+            if (e && e->has_view)
+                LOG(" view mask %#x layers %u+%u swz %u%u%u%u fmt %#x", e->view.setmask, e->view.min_layer, e->view.num_layers, e->view.swizzle[0], e->view.swizzle[1],
+                    e->view.swizzle[2], e->view.swizzle[3], e->view.format);
+            LOG("\n");
+        }
         if (t->format == 0x1 && t->width >= 256 && t->addr) {  // (R8 atlases, e.g. a glyph cache: guest bytes vs the GPU copy)
             const uint8_t *g = (const uint8_t *)(uintptr_t)t->addr;
             uint64_t n = (uint64_t)t->width * t->height, nz = 0;
@@ -7475,6 +7679,19 @@ static bool ib_overrun(CmdRec *r, const uint32_t *p, uint64_t pa) {
     uint64_t count = p[0], first = p[2], ib = r->x[2];
     if (!count || count > (1u << 22) || !ib || ib < GUEST_LO) return false;
     uint32_t restart = st.prim_restart ? st.restart_index : 0xFFFFFFFFu, mx = 0;
+    // (the first index is the block's, and a block holding other data gave one far past the guest memory window: this
+    // scan read unmapped memory and the render thread crashed - #122, Iris Xe, 0x78a841c5a4 against a window ending
+    // at 0x7740000000. The GPU can't read there either: skipped)
+    if (ib + first * isz < gwin_base || ib + (first + count) * isz > gwin_base + gwin_max) {
+        static int nlog;
+        if (nlog++ < 20)
+            LOG("[ibguard] frame %llu: skipped draw: indices %llx+%llu (first %u) outside guest memory %llx+%llx, args %llx\n",
+                (unsigned long long)renderer_present_count(), (unsigned long long)(ib + first * isz),
+                (unsigned long long)(count * isz), p[2], (unsigned long long)gwin_base, (unsigned long long)gwin_max,
+                (unsigned long long)pa);
+        stat_skipped_here();
+        return true;
+    }
     const uint8_t *ip = (const uint8_t *)(uintptr_t)(ib + first * isz);
     for (uint64_t i = 0; i < count; i++) {
         uint32_t v = isz == 1 ? ip[i] : isz == 2 ? ((const uint16_t *)ip)[i] : ((const uint32_t *)ip)[i];
@@ -8448,7 +8665,7 @@ static bool fsr2_copy(Prog *pr) {
                       .w = w, .h = h, .ow = w, .oh = h, .jx = fsr2_jx, .jy = fsr2_jy, .dt_ms = fminf(fmaxf(dt, 1), 100),
                       .near_z = m[14] > 0 ? m[14] : 0.1f, .fov_y = p11 > 0 ? 2 * atanf(1 / p11) : 1.0f, .sharpness = 0, .reset = reset};
     VkCommandBuffer sec = fsr2_cmd();
-    bool ok = vk_fsr2_record(g_vk.phys, g_vk.dev, sec, &fr);
+    bool ok = (g_settings.taa == 2 ? vk_fsr3_record : vk_fsr2_record)(g_vk.phys, g_vk.dev, sec, &fr);  // (F1: FSR 3.1 or 2)
     VK_CHECK(vkEndCommandBuffer(sec));
     if (!ok) return false;
     // (the shown image's first pass this frame is now the HUD's: a target's first pass in a frame clears it -

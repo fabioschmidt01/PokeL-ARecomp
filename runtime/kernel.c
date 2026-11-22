@@ -121,6 +121,16 @@ static pthread_mutex_t g_mlock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t heap_size;
 static uint64_t tls_next = TLS_BASE;
 uint64_t kernel_heap_size(void) { return heap_size; }  // bytes from HEAP_BASE set by SetHeapSize
+// [addr, addr + size) lies in one mapped region (runtime/pla_cheats.c: the cheat VM follows the game's pointers, which
+// may point anywhere before the game has set its objects up - reading unmapped guest memory would end the process)
+bool kernel_guest_mapped(uint64_t addr, uint64_t size) {
+    bool ok = false;
+    pthread_mutex_lock(&g_mlock);
+    for (int i = 0; i < nregions; i++)
+        if (addr >= regions[i].addr && addr + size <= regions[i].addr + regions[i].size) { ok = regions[i].type != 0; break; }
+    pthread_mutex_unlock(&g_mlock);
+    return ok;
+}
 // The largest physical memory region (svcMapPhysicalMemory): where a game on the SDK's virtual address memory keeps
 // what others keep in their heap. Its size (0: none), *addr its start.
 uint64_t kernel_phys_largest(uint64_t *addr) {

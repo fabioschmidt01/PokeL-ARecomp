@@ -440,8 +440,31 @@ static void create_image(NvnTexture *t, TexBackend *b) {
                             .extent = {tw, th, depth}, .mipLevels = levels, .arrayLayers = layers,
                             .samples = (VkSampleCountFlagBits)samples, .tiling = VK_IMAGE_TILING_OPTIMAL, .usage = usage,
                             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
-    VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+    // An integrated GPU whose "video memory" is a small carve-out of the RAM (#281: Ryzen 7 5700U, heap 0 = 256 MB,
+    // budget 243 MB) got the game's ~4000 textures there anyway: 629 MB in it, 2.5x its budget, and after ~5 min a
+    // 6.4 s frame, corrupted draws and device lost. Such a GPU reads system memory the same way (it is all RAM), so
+    // there the textures stay within the heap's budget and the rest goes to system memory (VMA picks the next memory
+    // type). Only when the largest device-local heap is under 1 GB; LARECOMP_VK_TEX_BUDGET=0 off, =1 on any GPU.
+    static int within = -1;
+    if (within < 0) {
+        const char *e = getenv("LARECOMP_VK_TEX_BUDGET");
+        VkPhysicalDeviceMemoryProperties mp;
+        vkGetPhysicalDeviceMemoryProperties(g_vk.phys, &mp);
+        VkDeviceSize big = 0;
+        for (uint32_t h = 0; h < mp.memoryHeapCount; h++)
+            if ((mp.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) && mp.memoryHeaps[h].size > big) big = mp.memoryHeaps[h].size;
+        within = e ? atoi(e) != 0
+                   : g_vk.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU && big < (1ull << 30);
+        if (within) LOG("[vk] textures kept within the video memory budget (largest device-local heap %llu MB): the rest in system memory\n",
+                        (unsigned long long)(big >> 20));
+    }
+    VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+                                  .flags = within ? VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT : 0};
     VkResult r = vmaCreateImage(g_vk.vma, &ci, &ai, &b->image, &b->mem, NULL);
+    if (r != VK_SUCCESS && ai.flags) {  // (over every heap's budget: as before, wherever it fits)
+        ai.flags = 0;
+        r = vmaCreateImage(g_vk.vma, &ci, &ai, &b->image, &b->mem, NULL);
+    }
     if (r != VK_SUCCESS) {
         // (the Vulkan side too: a driver can refuse a format / usage / tiling combination with "out of device memory",
         // issue #45 - a GTX 1060 failing a 1920x1080 image with plenty of memory free)
@@ -1091,8 +1114,12 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
     // nothing. LARECOMP_TEX_RECHECK=<frames>: another interval)
     static long recheck = -1;
     if (recheck < 0) recheck = ENV("LARECOMP_TEX_RECHECK") ? atol(ENV("LARECOMP_TEX_RECHECK")) : 3600;
-    bool periodic = recheck > 0 && frame - b->full_frame >= (uint64_t)recheck && full_hash_budget >= total;
-    if (!full && periodic) { full = true; full_hash_budget -= total; }
+    // (a texture bigger than the 4 MB budget gets it whole when it is the frame's first: before, it could never have
+    // its safety-net hash. The budget saturates at 0 - a wrap made it unlimited for the rest of the frame. Upstream 8a7e39c)
+#define TEX_BUDGET_TAKE(n) (full_hash_budget = full_hash_budget > (n) ? full_hash_budget - (n) : 0)
+    bool budget_ok = full_hash_budget >= total || full_hash_budget == (4u << 20);
+    bool periodic = recheck > 0 && frame - b->full_frame >= (uint64_t)recheck && budget_ok;
+    if (!full && periodic) { full = true; TEX_BUDGET_TAKE(total); }
     bool identified_now = !b->tp;  // (button prompts / Hero Mode icon: re-uploaded when their look changes)
     if (identified_now) b->tp = texpatch_marker(t);
     bool restyle = b->tp > 0 && b->tp <= TEXPATCH_RECOLOUR_BASE && b->uploaded && b->tp_gen != texpatch_generation();
@@ -1108,12 +1135,17 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
         int ch = vk_pages_changed(t->addr, total, b->wgen, &now);
         if (ch > 0) prof_tex_watch_written++;
         else if (ch < 0) prof_tex_watch_unknown++, prof_tex_watch_gpu += ch == -2;
-        if (ch >= 0) {
+        if (ch > 0 && !full && b->uploaded) {
+            // Written since the last check: the sparse sample (8 bytes in 2048) can miss the change, and the generation
+            // would be used up - the texture stale for good. A full hash when the budget allows, else the write is kept
+            // for the next check (its generation not taken) and only the sample is compared now.
+            if (full_hash_budget >= total || full_hash_budget == (4u << 20)) { full = true; TEX_BUDGET_TAKE(total); b->wgen = now; }
+        } else if (ch >= 0) {
             b->wgen = now;
             if (!ch && b->uploaded && !restyle) {
                 if (!periodic) { prof_tex_watch_skips++; return; }
                 tracked_clean = true;
-                if (b->dynamic) full_hash_budget -= total;  // (the others took theirs above)
+                if (b->dynamic) TEX_BUDGET_TAKE(total);  // (the others took theirs above)
             }
         }
     }
@@ -1221,6 +1253,8 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
         }
     }
 }
+
+#undef TEX_BUDGET_TAKE
 
 TexBackend *vk_tex(NvnTexture *t, bool for_render) {
     TexBackend *b = tex_backend(t);

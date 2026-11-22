@@ -43,6 +43,7 @@ void save_editor_on_open(void);
 void rando_tab_draw(float scale);
 bool warp_tab_draw(float scale);  // warp_tab.mm: true when a warp started
 extern "C" void cheats_draw(float scale);  // cheats.mm
+void pla_cheats_draw(float scale);         // pla_cheats_ui.mm (Pokémon Legends: Arceus)
 extern "C" int settings_on_steam_deck(void);  // settings.c
 extern "C" void difficulty_draw(float scale);  // difficulty.mm
 void controls_tab_draw(float scale);  // controls_ui.mm
@@ -283,11 +284,12 @@ void menu_apply_window_requests(void *win) {
     g_pixel_density = SDL_GetWindowPixelDensity(w);
     static bool text_input;
     bool want_text = capturing();
-    if (want_text != text_input) {
-        if (want_text) SDL_StartTextInput(w);
-        else SDL_StopTextInput(w);
-        text_input = want_text;
-    }
+    // A focus loss (an overlay, a click on another window) stops SDL's text input by itself. Re-arm it when the
+    // window has the focus again: the open/closed transition alone left the field unable to take typed text
+    // (upstream 02b53a0; the name entry, issue #20).
+    if (want_text && !SDL_TextInputActive(w)) SDL_StartTextInput(w);
+    else if (!want_text && text_input) SDL_StopTextInput(w);
+    text_input = want_text;
     static bool first_game = true;
     if (g_start_screen) {
         if (g_want_fullscreen_apply.exchange(false)) {
@@ -846,16 +848,19 @@ static void tab_video_advanced(bool in_game) {
                   "Muda na hora."));
 #ifndef __APPLE__
     if (!la) {  // (runtime/nvn/vulkan/exec.c fsr2_copy: applies at once)
-        int t = g_settings.taa ? 1 : 0;
-        const char *taa[] = {TR("Game's", "Do jogo"), "AMD FSR 2"};
-        if (opt_choice(TR("Temporal anti-aliasing", "Anti-aliasing temporal"), &t, taa, 2, 0,
-                       TR("AMD FSR 2 in place of the game's own edge smoothing: it combines several frames, so fences, "
-                          "railings, leaves and thin lines stay smooth and stop flickering as you move. Uses a little GPU "
-                          "time. With it on, Anti-aliasing (SMAA) above isn't needed.",
-                          "AMD FSR 2 no lugar da suavização de bordas do próprio jogo: ele combina vários quadros, então "
-                          "grades, corrimões, folhas e linhas finas ficam lisos e param de tremular quando você anda. Usa um "
-                          "pouco da GPU. Com ele ligado, o Anti-aliasing (SMAA) acima não é necessário.")))
-            g_settings.taa = t == 1;
+        int t = g_settings.taa <= 2 ? g_settings.taa : 0;
+        const char *taa[] = {TR("Game's", "Do jogo"), "AMD FSR 2", "AMD FSR 3.1 (experimental)"};
+        if (opt_choice(TR("Temporal anti-aliasing", "Anti-aliasing temporal"), &t, taa, 3, 0,
+                       TR("AMD FSR in place of the game's own edge smoothing: it combines several frames, so fences, "
+                          "railings, leaves and thin lines stay smooth and stop flickering as you move. FSR 3.1 keeps more "
+                          "detail in motion and leaves fewer trails than FSR 2. Uses a little GPU time. With it on, "
+                          "Anti-aliasing (SMAA) above isn't needed. FSR 3.1 is experimental: new in 0.27, report anything odd.",
+                          "AMD FSR no lugar da suavização de bordas do próprio jogo: ele combina vários quadros, então "
+                          "grades, corrimões, folhas e linhas finas ficam lisos e param de tremular quando você anda. O FSR 3.1 "
+                          "mantém mais detalhe em movimento e deixa menos rastro que o FSR 2. Usa um pouco da GPU. Com ele "
+                          "ligado, o Anti-aliasing (SMAA) acima não é necessário. O FSR 3.1 é experimental: novo na 0.27, reporte o "
+                          "que notar de estranho.")))
+            g_settings.taa = (uint8_t)t;
     }
 #endif
 #ifndef __APPLE__
@@ -1152,10 +1157,12 @@ static void keyboard_draw(ImGuiIO &io, float scale) {
     ImGui::TextColored(ImVec4(0.95f, 0.71f, 0.27f, 1), "%s", TR("Enter your name", "Digite seu nome"));
     ImGui::PopFont();
     static bool was_open, was_pad;
-    bool pad = g_last_pad.load(), appearing = !was_open || pad != was_pad;  // (switching device: focus the new one)
+    // LARECOMP_KBD_KEYBOARD=1: type with the physical keyboard even while a pad is connected.
+    bool pad = !getenv("LARECOMP_KBD_KEYBOARD") && g_last_pad.load(),
+         appearing = !was_open || pad != was_pad;  // (switching device: focus the new one)
     was_open = true, was_pad = pad;
     if (!pad) {  // keyboard: type straight into the field
-        if (appearing) ImGui::SetKeyboardFocusHere();
+        if (appearing || !ImGui::IsAnyItemActive()) ImGui::SetKeyboardFocusHere();
         ImGui::SetNextItemWidth(-1);
         ImGui::PushFont(g_font_big);
         ImGui::InputText("##name", g_kbd_text, (size_t)(g_kbd_max * 4 + 1 < (int)sizeof g_kbd_text ? g_kbd_max * 4 + 1 : sizeof g_kbd_text),
@@ -1260,9 +1267,9 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     if (prelaunch) tabs[ntabs++] = {TR("Files", "Arquivos"), -1, true};
     if (!menu_la_tabs) {
         const char *names[] = {TR("Controls", "Controles"), TR("Video", "Vídeo"), TR("Advanced Video", "Vídeo Avançado"),
-                               TR("Audio", "Áudio"), TR("Game", "Jogo"), TR("Quit", "Sair")};
-        static const int ids[] = {8, 0, 11, 1, 10, 9};
-        for (int i = 0; i < 6; i++)
+                               TR("Audio", "Áudio"), TR("Game", "Jogo"), "Cheats", TR("Quit", "Sair")};
+        static const int ids[] = {8, 0, 11, 1, 10, 12, 9};  // (12: Cheats - pla_cheats_draw, ui/pla_cheats_ui.mm)
+        for (int i = 0; i < 7; i++)
             if (ids[i] != 9 || !prelaunch) tabs[ntabs++] = {names[i], ids[i], true};
     } else {
         static const char *names[] = {"Video", "Audio", "Save Editor", "Randomizer", "Warp", "Cheats", "Gameplay",
@@ -1388,6 +1395,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 case 8: controls_tab_draw(scale); break;
                 case 9: tab_quit(scale, in_game); break;
                 case 10: tab_game(); break;
+                case 12: pla_cheats_draw(scale); break;
                 }
                 static const char *scroll_test = getenv("LARECOMP_MENU_SCROLL");  // test hook: page scroll, 0..1
                 if (scroll_test) ImGui::SetScrollY(ImGui::GetScrollMaxY() * (float)atof(scroll_test));

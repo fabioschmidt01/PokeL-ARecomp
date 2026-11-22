@@ -219,7 +219,7 @@ static void log_to_file_without_terminal(void) {
 static void require_cpu(void) {
     __builtin_cpu_init();
     if (__builtin_cpu_supports("sse4.2") && __builtin_cpu_supports("popcnt")) return;
-    fprintf(stderr, "FATAL: ZA Recomp needs a CPU with SSE4.2 (Intel Core i3/i5/i7 / 2008 or newer, AMD Bulldozer / "
+    fprintf(stderr, "FATAL: PokeL-ARecomp needs a CPU with SSE4.2 (Intel Core i3/i5/i7 / 2008 or newer, AMD Bulldozer / "
                     "2011 or newer).\n");
     exit(1);
 }
@@ -359,11 +359,12 @@ void plat_fatal_notice(void) {
     rt_crash_explain(text, sizeof text, g_log_path);
     if (!g_log_path[0]) return;
     fflush(stderr);
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "ZA Recomp", text, NULL);
+    extern void rt_crash_dialog(const char *text, const char *log_path);  // runtime/crash_report.c (Report on GitHub)
+    rt_crash_dialog(text, g_log_path);
 }
 
 static void *notice_thread(void *text) {
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "LAS Recomp", text, NULL);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "PokeL-ARecomp", text, NULL);
     free(text);
     return NULL;
 }

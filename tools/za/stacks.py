@@ -10,10 +10,12 @@ path, exe = sys.argv[1], sys.argv[2]
 rows = int(sys.argv[3]) if len(sys.argv) > 3 else 40
 focus = sys.argv[4] if len(sys.argv) > 4 else None
 mods, stacks = [], []
+guest_names = {}
 for line in open(path):
     p = line.split()
     if p[0] == 'M': mods.append((int(p[1], 16), int(p[2], 16), ' '.join(p[3:])))
     elif p[0] == 'S': stacks.append([int(x, 16) for x in p[1:]])
+    elif p[0] == 'G': guest_names[int(p[1], 16)] = p[2]  # (the game code's functions: windows.c stack_sampler)
 mods.sort()
 mbase = [m[0] for m in mods]
 exe_mod = next((m for m in mods if m[2].lower().endswith('.exe')), None)  # (the process's own image: the one .exe)
@@ -45,6 +47,7 @@ if exe_addrs:
 
 def frames(a):
     if a in chains and chains[a] and chains[a][0] != '??': return chains[a]
+    if a in guest_names: return [guest_names[a]]  # (a game code function, named by the sampler)
     m = module_of(a)
     return [os.path.basename(m[2]) if m else '?%x' % a]
 

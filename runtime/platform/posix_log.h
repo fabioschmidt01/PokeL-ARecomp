@@ -73,7 +73,21 @@ static void session_log_prune(const char *dir) {
 }
 
 // stdout / stderr -> <dir>/lasrecomp.log (path_out: its path, emptied on failure).
-static void session_log_open(const char *dir, char *path_out, size_t n) {
+static void session_log_open(const char *data_dir, char *path_out, size_t n) {
+    // (every log in <data folder>/logs, as on Windows: the ones earlier versions left in the data folder move in once)
+    char dir[1100];
+    snprintf(dir, sizeof dir, "%s/logs", data_dir);
+    mkdir(dir, 0755);
+    DIR *old = opendir(data_dir);
+    for (struct dirent *e; old && (e = readdir(old));) {
+        size_t len = strlen(e->d_name);
+        if (strncmp(e->d_name, "lasrecomp", 9) || len < 13 || strcmp(e->d_name + len - 4, ".log")) continue;
+        char a[1400], b[1400];
+        snprintf(a, sizeof a, "%s/%s", data_dir, e->d_name);
+        snprintf(b, sizeof b, "%s/%s", dir, e->d_name);
+        rename(a, b);
+    }
+    if (old) closedir(old);
     snprintf(path_out, n, "%s/lasrecomp.log", dir);
     bool append = getenv("LASRECOMP_LOG_APPEND") != NULL;
     if (!append) {

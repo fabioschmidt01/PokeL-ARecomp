@@ -475,6 +475,28 @@ static void log_to_file_without_console(void) {
     char *slash = strrchr(dir, '\\');
     if (!slash) return;
     slash[1] = 0;
+    // Every log in the logs folder next to the program (2026-11-19: lasrecomp.log and the five session backups sat in
+    // the program's own folder, beside play.log in logs\): the ones earlier versions left there are moved in once.
+    {
+        char root[MAX_PATH];
+        snprintf(root, sizeof root, "%s", dir);
+        if (strlen(dir) + 6 >= sizeof dir) return;
+        strcat(dir, "logs\\");
+        CreateDirectoryA(dir, NULL);
+        char pat[MAX_PATH], from[MAX_PATH], to[MAX_PATH];
+        snprintf(pat, sizeof pat, "%slasrecomp*.log", root);
+        WIN32_FIND_DATAA fd;
+        HANDLE fh = FindFirstFileA(pat, &fd);
+        if (fh != INVALID_HANDLE_VALUE) {
+            do {
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+                snprintf(from, sizeof from, "%s%s", root, fd.cFileName);
+                snprintf(to, sizeof to, "%s%s", dir, fd.cFileName);
+                MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING);  // (one that can't move stays where it is)
+            } while (FindNextFileA(fh, &fd));
+            FindClose(fh);
+        }
+    }
     if (snprintf(g_log_latest, sizeof g_log_latest, "%slasrecomp.log", dir) >= (int)sizeof g_log_latest) return;
     unsigned long long hash = 14695981039346656037ull;
     for (const unsigned char *p = (const unsigned char *)g_log_latest; *p; p++) hash = (hash ^ *p) * 1099511628211ull;
@@ -559,7 +581,8 @@ void plat_fatal_notice(void) {
     rt_crash_explain(text, sizeof text, g_log_path);
     if (!g_log_path[0]) return;
     fflush(stderr);
-    MessageBoxA(NULL, text, "PokeL-ARecomp", MB_ICONERROR | MB_OK);
+    extern void rt_crash_dialog(const char *text, const char *log_path);  // runtime/crash_report.c (Report on GitHub)
+    rt_crash_dialog(text, g_log_path);
 }
 
 // (profiling) LARECOMP_SAMPLE=<delay s>,<duration s>: after the delay, a thread samples the instruction pointer of
@@ -648,6 +671,16 @@ static DWORD WINAPI stack_sampler(double dur) {
                 if (K32GetModuleInformation(GetCurrentProcess(), mods[i], &mi, sizeof mi) && GetModuleFileNameA(mods[i], path, sizeof path))
                     fprintf(f, "M %llx %lx %s\n", (unsigned long long)(uintptr_t)mi.lpBaseOfDll, mi.SizeOfImage, path);
             }
+        {   // the game code's functions by name ("G <host address> f_<guest address>"): the game library has no symbols
+            // of its own, only the dispatch tables (runtime/dispatch.c rt_host_fn_name) - tools/za/stacks.py reads these
+            extern const char *rt_host_fn_name(uint64_t pc, uint64_t *offset);
+            for (size_t i = 0; i < n; i++)
+                for (int d = 0; d < STK_DEPTH && stk[i][d]; d++) {
+                    uint64_t off = 0;
+                    const char *nm = rt_host_fn_name(stk[i][d], &off);
+                    if (nm) fprintf(f, "G %llx %s\n", (unsigned long long)stk[i][d], nm);
+                }
+        }
         for (size_t i = 0; i < n; i++) {
             fputc('S', f);
             for (int d = 0; d < STK_DEPTH && stk[i][d]; d++) fprintf(f, " %llx", (unsigned long long)stk[i][d]);
@@ -705,7 +738,7 @@ static DWORD WINAPI sampler_main(void *arg) {
 }
 
 static DWORD WINAPI notice_thread(LPVOID text) {
-    MessageBoxA(NULL, text, "LAS Recomp", MB_ICONWARNING | MB_OK);
+    MessageBoxA(NULL, text, "PokeL-ARecomp", MB_ICONWARNING | MB_OK);
     free(text);
     return 0;
 }
@@ -920,6 +953,9 @@ static LONG WINAPI unhandled_filter(EXCEPTION_POINTERS *ep) {
     MEMORY_BASIC_INFORMATION mi;
     if (VirtualQuery((void *)(uintptr_t)ep->ContextRecord->Rsp, &mi, sizeof mi) && mi.State == MEM_COMMIT)
         lr = *(uint64_t *)(uintptr_t)ep->ContextRecord->Rsp;
+    // The driver's compiler crashed on a build worker: the game goes on without that pipeline, this thread stays here (#93)
+    extern bool vk_compile_crash_recover(uint64_t pc, const char *what, uint64_t fa) __attribute__((weak));
+    if (vk_compile_crash_recover && vk_compile_crash_recover(ep->ContextRecord->Rip, what, fa)) for (;;) Sleep(INFINITE);
     run_end();  // (the log has the report: not an end without a word)
     rt_fault_report(what, fa, ep->ContextRecord->Rip, lr);
 }

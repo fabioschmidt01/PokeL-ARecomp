@@ -108,9 +108,6 @@ jobs:
           if (!(Test-Path "build/dist-za/PokeL-ARecomp-windows-x64.zip")) {
             throw "Expected package build/dist-za/PokeL-ARecomp-windows-x64.zip was not found!"
           }
-          if (Test-Path "build/PokeL-Extractor/PokeL-Extractor.exe") {
-            Copy-Item -Force "build/PokeL-Extractor/PokeL-Extractor.exe" "build/dist-za/PokeL-Extractor.exe"
-          }
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
@@ -118,13 +115,6 @@ jobs:
           name: PokeL-ARecomp-windows-x64
           path: build/dist-za/PokeL-ARecomp-windows-x64.zip
           if-no-files-found: error
-
-      - name: Upload Extractor Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: PokeL-Extractor-standalone-windows-x64
-          path: build/dist-za/PokeL-Extractor.exe
-          if-no-files-found: warn
 
   linux:
     name: Linux x86_64 AppImage
@@ -185,12 +175,6 @@ jobs:
           name: PokeL-ARecomp-windows-x64
           path: dist-release
 
-      - name: Download Extractor Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: PokeL-Extractor-standalone-windows-x64
-          path: dist-release
-
       - name: Download Linux Artifact
         uses: actions/download-artifact@v4
         with:
@@ -209,7 +193,6 @@ jobs:
             echo "### Downloads"
             echo "- **Windows**: \`PokeL-ARecomp-windows-x64.zip\`"
             echo "- **Linux**: \`PokeL-ARecomp-${TAG}-linux-x86_64.AppImage\` (glibc 2.35+, Steam Deck / Ubuntu / Mint / Fedora / Arch)"
-            echo "- **PokeL-Extractor**: \`PokeL-Extractor.exe\` (separate NSP/XCI extraction tool, versioned independently)"
             echo
             if [ -s .github/RELEASE_NOTES.md ]; then
               cat .github/RELEASE_NOTES.md
@@ -224,7 +207,6 @@ jobs:
         with:
           files: |
             dist-release/*.zip
-            dist-release/*.exe
             dist-release/*.AppImage
           name: "PokeL-ARecomp ${{ github.ref_name }}"
           draft: false

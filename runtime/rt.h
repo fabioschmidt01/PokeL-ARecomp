@@ -89,6 +89,7 @@ void rt_fatal_msg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void rt_crash_fault(const char *what, uint64_t fa, uint64_t pc);
 void rt_crash_explain(char *out, size_t n, const char *log_path);
 extern int rt_romfs_files;
+extern int rt_gpu_bad_code;  // (driver trouble: device.c vk_bad_code_note / vk_compile_crash_note; upstream 4874618)
 void crash_handler_install(void);  // per thread (alternate signal stack)
 
 // ---- kernel.c

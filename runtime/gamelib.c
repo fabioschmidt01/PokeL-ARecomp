@@ -32,6 +32,19 @@ bool gamelib_old_cpu(void) {
 
 // The library's id file (<library>.id, written next to it by the build): its id (gamelib_full_id), read without
 // loading it, plus extracted/recomp_state.ini to lock the compiled state to the Recomp version + PC hardware.
+// The id the game code library must have: gamelib_full_id (GAMELIB_ID-<build ID>), plus the set of code cheats built
+// into it (runtime/pla_cheats.c: "-c<hash>", nothing without them - so the id of a build without cheats is unchanged).
+// A changed cheat set no longer matches, and the start screen rebuilds the game code with it.
+void pla_cheats_id_suffix(char *out, size_t n);
+bool gamelib_want_id(const char *game_dir, char *out, size_t size) {
+    if (!gamelib_full_id(game_dir, out, size)) return false;
+    char suf[32];
+    pla_cheats_id_suffix(suf, sizeof suf);
+    size_t l = strlen(out);
+    if (suf[0] && l + strlen(suf) < size) memcpy(out + l, suf, strlen(suf) + 1);
+    return true;
+}
+
 static void write_recomp_state(const char *game_dir, const char *want) {
     if (!game_dir || !*game_dir || !want || !*want) return;
     char spath[1100];
@@ -107,7 +120,7 @@ static int candidates(const char *game_dir, char out[3][1100]) {
 bool gamelib_present(const char *game_dir) {
     if (g_tables) return true;
     char want[GAMELIB_FULL_ID_SIZE];
-    if (!game_dir || !gamelib_full_id(game_dir, want, sizeof want)) return false;
+    if (!game_dir || !gamelib_want_id(game_dir, want, sizeof want)) return false;
     char c[3][1100];
     int n = candidates(game_dir, c);
     for (int i = 0; i < n; i++)
@@ -125,21 +138,15 @@ static const GameLibTables *open_lib(const char *path, const char *want) {
         if (last_slash) {
             *last_slash = '\0';
             SetDllDirectoryA(exe_dir);
-            // Ensure lasrecomp.exe exists as a companion alias so lasgame.dll's import binds
-            char lasrecomp_path[MAX_PATH];
-            snprintf(lasrecomp_path, sizeof lasrecomp_path, "%s\\lasrecomp.exe", exe_dir);
-            char self_path[MAX_PATH];
-            GetModuleFileNameA(NULL, self_path, sizeof self_path);
-            if (GetFileAttributesA(lasrecomp_path) == INVALID_FILE_ATTRIBUTES) {
-                if (!CreateHardLinkA(lasrecomp_path, self_path, NULL)) {
-                    CopyFileA(self_path, lasrecomp_path, FALSE);
-                }
-            }
+            // The game code imports from "PokeL-ARecomp.exe" (its import library, PokeL-ARecomp.dll.a: the Makefile), the
+            // running program - no lasrecomp.exe alias (a hard link to this exe, then loaded as a library: a second copy
+            // of the program in memory). The alias earlier versions made is removed. (2026-11-19)
+            char alias[MAX_PATH], self_path[MAX_PATH];
+            snprintf(alias, sizeof alias, "%s\\lasrecomp.exe", exe_dir);
+            const char *self_name = GetModuleFileNameA(NULL, self_path, sizeof self_path) ? strrchr(self_path, '\\') : NULL;
+            if (self_name && _stricmp(self_name + 1, "lasrecomp.exe") != 0 && GetFileAttributesA(alias) != INVALID_FILE_ATTRIBUTES)
+                DeleteFileA(alias);
         }
-    }
-    // If running under a renamed binary (e.g. PokeL-ARecomp.exe), load lasrecomp.exe so its exported symbols are in the PEB module list
-    if (!GetModuleHandleA("lasrecomp.exe")) {
-        LoadLibraryA("lasrecomp.exe");
     }
     HMODULE h = LoadLibraryExA(path, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!h) h = LoadLibraryA(path);
@@ -165,7 +172,7 @@ bool gamelib_load(const char *game_dir, char *why, size_t why_size) {
         tried = true;
         snprintf(g_error, sizeof g_error, "the game code hasn't been built: set up the game files on the start screen");
         char want[GAMELIB_FULL_ID_SIZE] = "";
-        if (!game_dir || !gamelib_full_id(game_dir, want, sizeof want)) {
+        if (!game_dir || !gamelib_want_id(game_dir, want, sizeof want)) {
             snprintf(g_error, sizeof g_error, "the game files' exefs/main is missing or unreadable");
             if (why) snprintf(why, why_size, "%s", g_error);
             return false;

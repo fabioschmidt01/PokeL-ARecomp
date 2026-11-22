@@ -352,7 +352,7 @@ void settings_load(void) {
         else if (!strcmp(key, "sharpening")) {
             for (int i = 0; i < SHARPEN_N; i++) if (!strcmp(val, sharpen_names[i])) g_settings.sharpen = i;
         }
-        else if (!strcmp(key, "temporal_aa")) g_settings.taa = !strcmp(val, "fsr2");
+        else if (!strcmp(key, "temporal_aa")) g_settings.taa = !strcmp(val, "fsr3") ? 2 : !strcmp(val, "fsr2") ? 1 : 0;
         else if (!strcmp(key, "inv_keys")) g_settings.inv_keys = atoi(val) != 0;
         else if (!strcmp(key, "dpad_move")) g_settings.dpad_move = atoi(val) != 0;
         else if (!strcmp(key, "rumble")) g_settings.rumble = atoi(val) != 0;
@@ -381,6 +381,7 @@ void settings_load(void) {
         }
         else if (!strcmp(key, "tracker")) g_settings.tracker = atoi(val) != 0;
         else if (!strcmp(key, "tracker_filters")) g_settings.tracker_filters = atoi(val);
+        else if (!strcmp(key, "screen_mode_set")) g_settings.screen_mode_set = atoi(val) != 0;
         else if (!strcmp(key, "menu_tip_seen")) g_settings.menu_tip_seen = atoi(val) != 0, tip_key = true;
         else if (!strcmp(key, "aspect_asked")) g_settings.aspect_asked = atoi(val) != 0, aspect_key = true;
         else if (!strcmp(key, "video_recommended"))
@@ -479,7 +480,7 @@ void settings_save(void) {
     fprintf(f, "xess_quality = %d\n", g_settings.xess_quality);
     fprintf(f, "antialias = %s\n", g_settings.antialias == AA_SMAA ? "smaa" : "off");
     fprintf(f, "sharpening = %s\n", sharpen_names[g_settings.sharpen >= 0 && g_settings.sharpen < SHARPEN_N ? g_settings.sharpen : 0]);
-    fprintf(f, "temporal_aa = %s\n", g_settings.taa ? "fsr2" : "game");
+    fprintf(f, "temporal_aa = %s\n", g_settings.taa == 2 ? "fsr3" : g_settings.taa == 1 ? "fsr2" : "game");
     fprintf(f, "resolution = %s\n", g_settings.res_auto ? "auto" : res_name(g_settings.res_mode));
     fprintf(f, "inv_keys = %d\n", g_settings.inv_keys);
     fprintf(f, "dpad_move = %d\n", g_settings.dpad_move);
@@ -506,6 +507,7 @@ void settings_save(void) {
     fprintf(f, "aspect_asked = %d\n", g_settings.aspect_asked);
     fprintf(f, "video_recommended = %s\n",
             g_settings.video_rec == VREC_AUTO ? "auto" : g_settings.video_rec == VREC_DONE ? "done" : "none");
+    fprintf(f, "screen_mode_set = %d\n", g_settings.screen_mode_set);
     fprintf(f, "menu_tip_seen = %d\n", g_settings.menu_tip_seen);
     fprintf(f, "onedrive_kept = %d\n", g_settings.onedrive_kept);
     static const char *const letters[] = {"off", "explored", "map"};

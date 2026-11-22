@@ -50,7 +50,7 @@ typedef struct {
     int xess_quality;    // 0 Ultra Perf, 1 Perf, 2 Balanced, 3 Quality, 4 Ultra Quality, 5 Native AA
     int antialias;       // AA_*: anti-aliasing of the game image before it is scaled to the window
     int sharpen;         // SHARPEN_*: sharpening of the image in the window (Vulkan)
-    bool taa;            // Pokémon Z-A: AMD FSR 2's temporal anti-aliasing in place of the game's own (vulkan/exec.c fsr2_copy)
+    uint8_t taa;         // temporal anti-aliasing in place of the game's own: 0 the game's, 1 AMD FSR 2, 2 AMD FSR 3.1 (vulkan/exec.c fsr2_copy)
     int gpu_compat[GPU_COMPAT_N];  // GPU_AUTO / GPU_ON / GPU_OFF per GPU_* feature (Compatibility)
     float volume;        // master volume, 1 = 100%
     bool reverb;         // room reverb effect
@@ -98,6 +98,7 @@ typedef struct {
     int chaos_letters;   // CHAOS_LETTERS_*: room-shuffle doorway letters on the dungeon map
     bool aspect_asked;   // the start screen's one-time "authentic 16:9 or unlocked?" question was answered
     int video_rec;       // VREC_*: the recommended video settings (settings_video_recommend) - applied, to apply, to offer
+    bool screen_mode_set;  // the start screen asks "full screen or window?" at PLAY until "don't ask again" (0: ask)
     bool menu_tip_seen;  // the start screen's one-time "how to open the menu" note was shown (first PLAY ever)
     bool onedrive_kept;  // the start screen's OneDrive warning (Windows) was answered with Keep here
     // cheats (runtime/ui/cheats.mm), applied every frame while a save is loaded

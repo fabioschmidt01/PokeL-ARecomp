@@ -185,6 +185,38 @@ $(B)/fsr2/%.o: third_party/fsr2/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -Wno-absolute-value -c $< -o $@
 
+# AMD FSR 3.1's upscaler (third_party/fidelityfx-fsr3: FidelityFX SDK v1.1.4, MIT): its API, the SDK's Vulkan backend,
+# and its GLSL shaders for runtime/nvn/vulkan/fsr3_shaders.cpp (compiled at run time with shaderc, as FSR 2's). Next to
+# FSR 2 in one program: the five functions both SDKs name alike are renamed on this side.
+FSR3 := third_party/fidelityfx-fsr3
+FSR3_SHADERS := $(wildcard $(FSR3)/src/backends/vk/shaders/fsr3upscaler/*.glsl $(FSR3)/include/FidelityFX/gpu/*.h \
+                $(FSR3)/include/FidelityFX/gpu/fsr3upscaler/*.h $(FSR3)/include/FidelityFX/gpu/spd/*.h $(FSR3)/include/FidelityFX/gpu/fsr1/*.h)
+$(B)/inc/fsr3_shaders.inc: $(FSR3_SHADERS) tools/file_to_c_string.py
+	@mkdir -p $(dir $@)
+	$(PYTHON) tools/file_to_c_string.py fsr2 $@ $(FSR3_SHADERS)
+FSR3_FLAGS := -I$(FSR3)/include -I$(FSR3)/src/shared -I$(FSR3)/src/backends/shared -I$(FSR3)/src/components/fsr3upscaler \
+              -DffxAssertReport=ffx3AssertReport -DffxAssertSetPrintingCallback=ffx3AssertSetPrintingCallback \
+              -DffxGetCommandListVK=ffx3GetCommandListVK -DffxGetDeviceVK=ffx3GetDeviceVK \
+              -DffxGetSurfaceFormatVK=ffx3GetSurfaceFormatVK -Wno-absolute-value -Wno-unused-variable \
+              -DBackendContext_VK=BackendContext3_VK -DfindMemoryTypeIndex=ffx3FindMemoryTypeIndex \
+              -DaddBarrier=ffx3AddBarrier -DflushBarriers=ffx3FlushBarriers -DsetVKObjectName=ffx3SetVKObjectName \
+              -DgetVKImageUsageFlagsFromResourceUsage=ffx3GetVKImageUsageFlagsFromResourceUsage \
+              -DgetVKAccessFlagsFromResourceState=ffx3GetVKAccessFlagsFromResourceState \
+              -DgetVKPipelineStageFlagsFromResourceState=ffx3GetVKPipelineStageFlagsFromResourceState \
+              -DgetVKImageLayoutFromResourceState=ffx3GetVKImageLayoutFromResourceState \
+              -include new -include cmath -include cwchar -Dswprintf_s=swprintf  # (the SDK is written for MSVC)
+FSR3_OBJ := $(B)/fsr3/components/fsr3upscaler/ffx_fsr3upscaler.o $(B)/fsr3/backends/vk/ffx_vk.o \
+            $(B)/fsr3/shared/ffx_assert.o $(B)/fsr3/shared/ffx_object_management.o $(B)/fsr3/shared/ffx_breadcrumbs_list.o \
+            $(B)/fsr3/shared/ffx_message.o
+$(B)/fsr3/%.o: $(FSR3)/src/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(FSR3_FLAGS) -c $< -o $@
+$(B)/rt/nvn/vulkan/fsr3_shaders.o: $(B)/inc/fsr3_shaders.inc
+$(B)/rt/nvn/vulkan/fsr3_shaders.o $(B)/rt/nvn/vulkan/fsr3.o: CXXFLAGS += -I$(B)/inc $(FSR3_FLAGS)
+ifeq ($(PLATFORM),linux)
+$(FSR3_OBJ) $(B)/rt/nvn/vulkan/fsr3.o $(B)/rt/nvn/vulkan/fsr3_shaders.o: CXXFLAGS += -DFFX_GCC
+endif
+
 # The shader preparation's variant list (runtime/nvn/shader_prep.h: no shader code, hashes and pipeline state only)
 # as a C string for runtime/nvn/shader_prep.c
 $(B)/inc/shader_variants.inc: runtime/nvn/shader_variants.txt tools/file_to_c_string.py
@@ -210,7 +242,7 @@ $(B)/rt/%.o: runtime/%.m $(RT_HDRS)
 # linked to a temp file, then renamed over: a copy of the game still running keeps its (old) file - relinking in
 # place gets running copies killed by macOS (code signature of the changed pages). The temp file keeps the real name
 # (in a folder of its own): on Windows the import library records the name the game code library loads it by.
-$(EXE): $(RT_OBJ) $(BACKEND_OBJ) $(UI_OBJ) $(IMGUI_OBJ) $(if $(filter %vulkan/exec.o,$(BACKEND_OBJ)),$(FSR2_OBJ))
+$(EXE): $(RT_OBJ) $(BACKEND_OBJ) $(UI_OBJ) $(IMGUI_OBJ) $(if $(filter %vulkan/exec.o,$(BACKEND_OBJ)),$(FSR2_OBJ) $(FSR3_OBJ))
 	@mkdir -p $(dir $@)link
 	$(CXX) -o $(dir $@)link/$(notdir $@) $^ $(LDFLAGS)
 	mv -f $(dir $@)link/$(notdir $@) $@

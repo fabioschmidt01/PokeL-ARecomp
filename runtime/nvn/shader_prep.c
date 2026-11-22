@@ -281,7 +281,8 @@ void shader_first_visit(const char *what, uint64_t a, uint64_t b, uint64_t id) {
 typedef struct { uint64_t hash; uint32_t file, off, size, const_offset, const_size; } IdxEnt;
 static IdxEnt *idx_tab;
 static size_t idx_cap, idx_n;
-typedef struct { char *path; uint8_t *mem; } IdxSrc;  // a game file, or (the main module's read-only data) memory
+typedef struct { char *path; uint8_t *mem; long long rom_off; } IdxSrc;  // a game file, (the main module's data) memory,
+                                                                     // or (rom_off >= 0) a file of the RomFS image
 static IdxSrc *idx_files;
 static int idx_nfiles;
 
@@ -390,7 +391,7 @@ static void idx_file(const char *path) {
             if (!memcmp(d + i, "BNSH\0\0\0\0", 8)) { any = true; idx_bnsh(d, (size_t)n, i, file); }
         if (any) {
             idx_files = realloc(idx_files, sizeof *idx_files * (size_t)(idx_nfiles + 1));
-            idx_files[idx_nfiles++] = (IdxSrc){strdup(path), NULL};
+            idx_files[idx_nfiles++] = (IdxSrc){strdup(path), NULL, -1};
         }
     }
     free(d);
@@ -422,7 +423,7 @@ static void idx_nso(const char *path) {
                 if (!memcmp(seg + i, "BNSH\0\0\0\0", 8)) { any = true; idx_bnsh(seg, size, i, file); }
             if (any) {
                 idx_files = realloc(idx_files, sizeof *idx_files * (size_t)(idx_nfiles + 1));
-                idx_files[idx_nfiles++] = (IdxSrc){NULL, seg};
+                idx_files[idx_nfiles++] = (IdxSrc){NULL, seg, -1};
             } else free(seg);
         }
     }
@@ -450,8 +451,118 @@ static void idx_store(const char *path) {
     fclose(f);
     if (any) {
         idx_files = realloc(idx_files, sizeof *idx_files * (size_t)(idx_nfiles + 1));
-        idx_files[idx_nfiles++] = (IdxSrc){strdup(path), NULL};
+        idx_files[idx_nfiles++] = (IdxSrc){strdup(path), NULL, -1};
     }
+}
+
+// The RomFS image's own files (runtime/services/fs.c fs_romfs_list): Pokémon Legends: Arceus is served from the player's
+// package with no romfs folder to scan (idx_dir found nothing, and a first start prepared no shader: only the code earlier
+// runs had kept). Its shaders are *.bnsh files, its effects *.ptcl, its UI *.arc. LARECOMP_SHADER_ROMFS=0: not read.
+extern int fs_romfs_list(void (*cb)(const char *path, uint64_t off, uint64_t size, void *ud), void *ud);
+extern long long fs_romfs_pread(void *dst, uint64_t size, uint64_t off);
+static int idx_rom_read;
+static void idx_romfs_file(const char *path, uint64_t off, uint64_t size, void *ud) {
+    (void)ud;
+    size_t l = strlen(path);
+    bool want = (l > 5 && !strcmp(path + l - 5, ".bnsh")) || (l > 5 && !strcmp(path + l - 5, ".ptcl")) ||
+                (l > 6 && !strcmp(path + l - 6, ".bfsha")) || (l > 4 && !strcmp(path + l - 4, ".arc"));
+    if (!want || size < 0x40 || size > (512u << 20)) return;
+    uint8_t *d = malloc((size_t)size);
+    if (!d) return;
+    if (fs_romfs_pread(d, size, off) == (long long)size) {
+        idx_rom_read++;
+        uint32_t file = (uint32_t)idx_nfiles;
+        bool any = false;
+        off_reset();
+        for (size_t i = 0; i + 8 <= (size_t)size; i += 8)  // (containers are aligned)
+            if (!memcmp(d + i, "BNSH\0\0\0\0", 8)) { any = true; idx_bnsh(d, (size_t)size, i, file); }
+        if (any) {
+            idx_files = realloc(idx_files, sizeof *idx_files * (size_t)(idx_nfiles + 1));
+            idx_files[idx_nfiles++] = (IdxSrc){NULL, NULL, (long long)off};
+        }
+    }
+    free(d);
+}
+// Reading those ~2000 files out of the package takes ~30 s (first test, 2026-11-19), so what they hold is kept in
+// cache/shader_romfs_index.bin: which shaders, in which file, where - checked against the image's file table (every
+// file's place and size, mods included), and made again when that changes. Later starts read it in milliseconds.
+static double ms_now(void);
+#define ROM_INDEX_FILE "cache/shader_romfs_index.bin"
+#define ROM_INDEX_MAGIC "PLASIDX1"
+static uint64_t rom_key;
+static void rom_key_file(const char *path, uint64_t off, uint64_t size, void *ud) {
+    (void)ud;
+    uint64_t h = rom_key ? rom_key : 1469598103934665603ull;
+    for (const char *p = path; *p; p++) h = (h ^ (uint8_t)*p) * 0x100000001B3ull;
+    h = (h ^ off) * 0x100000001B3ull;
+    rom_key = (h ^ size) * 0x100000001B3ull;
+}
+static bool rom_index_load(void) {
+    FILE *f = fopen(ROM_INDEX_FILE, "rb");
+    if (!f) return false;
+    char magic[8];
+    uint64_t key;
+    uint32_t nfiles, nent;
+    bool ok = fread(magic, 8, 1, f) == 1 && !memcmp(magic, ROM_INDEX_MAGIC, 8) && fread(&key, 8, 1, f) == 1 &&
+              key == rom_key && fread(&nfiles, 4, 1, f) == 1 && fread(&nent, 4, 1, f) == 1 && nfiles < (1u << 20) &&
+              nent < (1u << 24);
+    uint64_t *offs = ok ? malloc(sizeof *offs * (nfiles ? nfiles : 1)) : NULL;
+    ok = ok && offs && fread(offs, 8, nfiles, f) == nfiles;
+    IdxEnt *ents = ok ? malloc(sizeof *ents * (nent ? nent : 1)) : NULL;
+    ok = ok && ents && fread(ents, sizeof *ents, nent, f) == nent;
+    fclose(f);
+    if (ok) {
+        uint32_t base = (uint32_t)idx_nfiles;
+        idx_files = realloc(idx_files, sizeof *idx_files * (size_t)(idx_nfiles + nfiles));
+        for (uint32_t i = 0; i < nfiles; i++) idx_files[idx_nfiles++] = (IdxSrc){NULL, NULL, (long long)offs[i]};
+        for (uint32_t i = 0; i < nent; i++)
+            if (ents[i].file < nfiles)
+                idx_add(ents[i].hash, base + ents[i].file, ents[i].off, ents[i].size, ents[i].const_offset, ents[i].const_size);
+        LOG("[shader] index: %u shaders in %u of the game's files (" ROM_INDEX_FILE ")\n", nent, nfiles);
+    }
+    free(offs);
+    free(ents);
+    return ok;
+}
+static void rom_index_save(int first_file) {
+    uint32_t nfiles = (uint32_t)(idx_nfiles - first_file), nent = 0;
+    for (size_t i = 0; i < idx_cap; i++)
+        if (idx_tab[i].hash && idx_tab[i].file >= (uint32_t)first_file) nent++;
+    char tmp[256];
+    snprintf(tmp, sizeof tmp, "%s.tmp", ROM_INDEX_FILE);
+    mkdir("cache", 0755);
+    FILE *f = fopen(tmp, "wb");
+    if (!f) return;
+    fwrite(ROM_INDEX_MAGIC, 8, 1, f);
+    fwrite(&rom_key, 8, 1, f);
+    fwrite(&nfiles, 4, 1, f);
+    fwrite(&nent, 4, 1, f);
+    for (uint32_t i = 0; i < nfiles; i++) { uint64_t o = (uint64_t)idx_files[first_file + i].rom_off; fwrite(&o, 8, 1, f); }
+    for (size_t i = 0; i < idx_cap; i++)
+        if (idx_tab[i].hash && idx_tab[i].file >= (uint32_t)first_file) {
+            IdxEnt e = idx_tab[i];
+            e.file -= (uint32_t)first_file;
+            fwrite(&e, sizeof e, 1, f);
+        }
+    bool ok = fclose(f) == 0;
+#ifdef _WIN32
+    if (ok) remove(ROM_INDEX_FILE);
+#endif
+    if (!ok || rename(tmp, ROM_INDEX_FILE)) remove(tmp);
+}
+static void idx_romfs(void) {
+    const char *e = getenv("LARECOMP_SHADER_ROMFS");
+    if (e && !atoi(e)) return;
+    rom_key = 0;
+    int n = fs_romfs_list(rom_key_file, NULL);
+    if (!n || rom_index_load()) return;
+    size_t before = idx_n;
+    int first_file = idx_nfiles;
+    double t0 = ms_now();
+    fs_romfs_list(idx_romfs_file, NULL);
+    LOG("[shader] index: %zu shaders in %d of the game's %d files (%.0f ms, kept in " ROM_INDEX_FILE ")\n", idx_n - before,
+        idx_rom_read, n, ms_now() - t0);
+    rom_index_save(first_file);
 }
 
 static void idx_dir(const char *dir, int depth) {
@@ -477,7 +588,9 @@ static void idx_dir(const char *dir, int depth) {
 static uint8_t *blob_read(const IdxEnt *e, ShaderBlob *b, FILE **files) {
     uint8_t *d = calloc(1, (size_t)e->size + 0x100);  // (zero padding past the constants)
     if (idx_files[e->file].mem) memcpy(d, idx_files[e->file].mem + e->off, e->size);
-    else {
+    else if (idx_files[e->file].rom_off >= 0) {
+        if (fs_romfs_pread(d, e->size, (uint64_t)idx_files[e->file].rom_off + e->off) != (long long)e->size) { free(d); return NULL; }
+    } else {
         FILE **f = &files[e->file];
         if (!*f && !(*f = fopen(idx_files[e->file].path, "rb"))) { free(d); return NULL; }
         if (fseek(*f, (long)e->off, SEEK_SET) || fread(d, 1, e->size, *f) != e->size) { free(d); return NULL; }
@@ -580,6 +693,7 @@ static bool prep_run_locked(const char *romfs, void (*progress)(int done, int to
     if (progress) progress(0, total + 1);
     if (!idx_n) {
         idx_dir(romfs, 0);
+        idx_romfs();
         char main_nso[1100];  // (<game files>/exefs/main, next to romfs/)
         snprintf(main_nso, sizeof main_nso, "%s/../exefs/main", romfs);
         idx_nso(main_nso);
@@ -648,6 +762,30 @@ static bool prep_run_locked(const char *romfs, void (*progress)(int done, int to
 // (at the game's GPU device setup) Pokémon Z-A: always - the start screen can't prepare its shaders (vulkan/exec.c
 // renderer_prepare_begin), and here, during its logos, the ones its earlier runs kept (shader_seen_code) take well
 // under a second with warm caches. LARECOMP_SHADER_PREP=0: not; =1: Link's Awakening too (tests).
+// The preparation's progress on screen (a black frame with a notice line: vulkan/device.c backend_notice_frame), once
+// it has taken over 1.5 s - with warm caches it is done in well under a second and nothing shows. After a driver or
+// PokeL-ARecomp update it can take minutes on a slow driver (#291: 338 s on an Intel HD 520) with the window black, and
+// players closed it as a hang (#291 #297). Ten frames a second at most.
+static bool boot_shown;
+static void boot_progress(int done, int total) {
+    extern void backend_notice_frame(void) __attribute__((weak));  // (Vulkan only: Metal shows nothing)
+    extern void menu_notice(const char *text, int seconds);
+    static double t0, last;
+    double now = ms_now();
+    if (!t0) t0 = now;
+    static double after = -1;  // (LARECOMP_PREP_NOTICE_MS: from how long; 0 at once, tests)
+    if (after < 0) after = getenv("LARECOMP_PREP_NOTICE_MS") ? atof(getenv("LARECOMP_PREP_NOTICE_MS")) : 1500;
+    if (!backend_notice_frame || now - t0 < after || now - last < 100) return;
+    last = now, boot_shown = true;
+    char s[200];
+    int pct = total > 0 ? (int)(100.0 * (done < 0 ? 0 : done) / total) : 0;
+    snprintf(s, sizeof s, UI_TR("Preparing the game's shaders: %d%% (after an update or a new graphics driver: it can take "
+                                "a few minutes, please wait)", "Preparando os shaders do jogo: %d%% (depois de uma atualização ou de um driver de vídeo "
+                                "novo: pode levar alguns minutos, aguarde)"), pct > 100 ? 100 : pct);
+    menu_notice(s, 2);
+    backend_notice_frame();
+}
+
 void shader_prep_boot(const char *romfs) {
     extern int g_game_is_la;  // (runtime/rt.h)
     // (Pokémon Z-A only; F1 > Compatibility)
@@ -655,5 +793,9 @@ void shader_prep_boot(const char *romfs) {
         const char *e = getenv("LARECOMP_SHADER_PREP");
         if (!(e && atoi(e))) return;  // (=1 still forces it, Link's Awakening included)
     }
-    shader_prep_run(romfs, NULL, NULL);
+    shader_prep_run(romfs, boot_progress, NULL);
+    if (boot_shown) {
+        extern void menu_notice(const char *text, int seconds);
+        menu_notice(UI_TR("Shaders ready.", "Shaders prontos."), 2);
+    }
 }

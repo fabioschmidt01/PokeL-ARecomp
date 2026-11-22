@@ -16,20 +16,29 @@
 
 ---
 
+> [!CAUTION]
+> ## 🔊 Known issues in this version
+>
+> **1. Audio hiss.** Background music plays and most sounds are normal in towns, the field and battles, but the game's sound comes out quieter than it should. Turning the volume up brings out a **hiss**, heard most clearly in quiet scenes and on the **title screen**, whose soft music is buried under it.
+>
+> **2. Grey boxes on big titles.** When a large title leaves the screen (area names, *Strong Style* / *Agile Style* moves), **grey rectangles flash** where the text was, then disappear. The text itself reads correctly.
+>
+> Both are known and **being worked on**. You don't need to report them again.
+
 > [!WARNING]
 > ### ⚠️ Projeto em Desenvolvimento Ativo / Project in Active Development
 >
 > 🇧🇷 **Aviso da Comunidade:**  
 > Este é um projeto de código aberto em estágio ativo de desenvolvimento. Durante os testes internos (feitos por mim e amigos da comunidade), observamos que **bugs visuais, quedas temporárias de performance em transições (telas de carregamento, início de batalhas e fades) e eventuais travamentos/crashes são esperados**.
 > 
-> Pedimos a sua paciência e compreensão! Se você encontrar qualquer problema ou crash, **nos ajude reportando na aba [Issues](https://github.com/fabioschmidt01/PokeL-ARecomp/issues)** anexando os arquivos `lasrecomp.log` e `larecomp.ini` que ficam na pasta raiz do seu jogo. Com o seu feedback, conseguiremos lapidar e melhorar o port cada vez mais rápido!
+> Pedimos a sua paciência e compreensão! Se você encontrar qualquer problema ou crash, **nos ajude reportando na aba [Issues](https://github.com/fabioschmidt01/PokeL-ARecomp/issues)** anexando o `larecomp.ini` e os logs da pasta `logs` (se o jogo travar, o botão **Reportar no GitHub** da janela de crash junta tudo e abre a issue preenchida). Com o seu feedback, conseguiremos lapidar e melhorar o port cada vez mais rápido!
 >
 > ---
 >
 > 🇺🇸 **Community Notice:**  
 > This is an open-source project under active development. Throughout testing (conducted by myself, friends, and community testers), we have observed that **visual glitches, temporary performance drops during transitions (loading screens, battle entries, fades), and occasional crashes are expected**.
 >
-> We kindly ask for your patience and understanding! If you encounter any bugs or crashes, **please help us by opening a report in the [Issues](https://github.com/fabioschmidt01/PokeL-ARecomp/issues) tab**, attaching your `lasrecomp.log` and `larecomp.ini` from your game's root folder. Your feedback is essential to helping us improve the port as quickly as possible!
+> We kindly ask for your patience and understanding! If you encounter any bugs or crashes, **please help us by opening a report in the [Issues](https://github.com/fabioschmidt01/PokeL-ARecomp/issues) tab**, attaching your `larecomp.ini` and the logs from the `logs` folder (after a crash, the crash window's **Report on GitHub** button gathers everything and opens the issue already filled in). Your feedback is essential to helping us improve the port as quickly as possible!
 
 **PokeL-ARecomp** (PLA Recomp) turns *Pokémon Legends: Arceus* Nintendo Switch code into a native 64-bit Windows and Linux program.
 The game's ARM64 machine code is translated ahead-of-time (AOT) into C and compiled natively for x86-64. The Nintendo Switch OS kernel, filesystem, audio and Maxwell NVN graphics are reimplemented directly on top of Vulkan.
@@ -60,24 +69,31 @@ The game's ARM64 machine code is translated ahead-of-time (AOT) into C and compi
 - **Hisui Color Enhancement & Tonemapper**: High-fidelity Vulkan presentation post-processing filters (*Hisui Vibrant* and *Hisui Cinematic*) removing the washed-out gray haze with zero CPU overhead.
 - **Intel XeSS (Xe Super Sampling)**: AI neural upscaling accelerated by hardware XMX engines on Intel Arc GPUs (Ultra Performance to Native AA).
 - **AMD FidelityFX FSR 1, FSR 2 (temporal)**, and **SMAA** anti-aliasing.
+- **AMD FSR 3.1 (temporal) — 🧪 Experimental**: **F1 > Advanced Video > Temporal anti-aliasing > AMD FSR 3.1**. More detail in motion and fewer trails than FSR 2. Fast-moving objects can still leave a slight trail (motion is estimated from the camera only).
 - **Contrast-Adaptive Sharpening (RCAS)**: Real-time image clarity adjustment.
 - **Custom Shading & Lighting**: Screen-space ambient occlusion (XeGTAO), water reflections (SSR), screen-space indirect lighting (SSGI), and high-resolution shadow mapping (up to 4x).
 - **HDR Display Output**: scRGB / HDR10 support with peak brightness tuning.
 - **HD Texture Pack Loader**: Direct loading from `textures/hd/`.
 - **Ultrawide 21:9 / 32:9 (Hor+) — 🧪 Experimental**: with **F1 > Video > Aspect ratio > Unlocked (ultrawide)** the image fills any window shape: wider screens show more of the world at the sides, with no stretching. The window's shape is detected automatically. *Tested on a real 32:9 monitor in the open world, but battles, cutscenes, interiors and menus are not fully tested yet — bugs may occur* (objects popping in at the screen edges, effects or UI out of place). Please report them in [issue #1](https://github.com/fabioschmidt01/PokeL-ARecomp/issues/1). *Original 16:9* keeps the game's framing with side bars.
 
+- **HUD that follows the world in ultrawide** ([#15](https://github.com/fabioschmidt01/PokeL-ARecomp/issues/15)): the capture reticle, the "!" over a Pokémon that saw you, speech bubbles and map markers now sit on the Pokémon or place they mark at 21:9 / 32:9; the rest of the HUD stays in its 16:9 layout.
+
 - **Field of view slider**: **F1 > Video > Field of view** (45–90) widens the game's own camera. Scenery, particles, torch fire, Pokémon eyes and alert marks and the damage vignette all follow it, and the title screen keeps its framing.
 
+### Cheats — 🧪 Experimental
+- Atmosphere cheat files for version 1.1.1 (`AEE8F150DDA1B5A8.txt`, or a whole `atmosphere` folder) go in the `cheats` folder next to `PokeL-ARecomp.exe`. **F1 > Cheats** lists them with a switch each.
+- **Cheats that change values** (money, items...) work at once. **Code cheats** (catch rate...) change the game's code: after switching one, restart and the start screen recompiles the game with it (like the first build).
+- A cheat can break a save or crash the game: keep a backup (`save/backups/`) and turn cheats off before reporting a bug.
+
 ### Stability
+- **Shaders prepared before the game starts**: after PLAY, the game's known shaders are compiled up front (a few seconds the first time, cached afterwards), so there are far fewer hitches the first time each effect appears.
+- **Performance tip:** overlays that hook into the game (RivaTuner / MSI Afterburner, OBS game capture, Discord overlay...) cost a lot here: on the test machine closing them cut the worst camera-turn hitch from 244 ms to 82 ms ([#10](https://github.com/fabioschmidt01/PokeL-ARecomp/issues/10)).
 - **Command lists are protected from being overwritten**: the game hands its command memory out again much sooner than this port can translate it. Lists are now kept in the port's own memory until they are translated. This fixed the crashes in Jubilife's Floaro Main Street ([#7](https://github.com/fabioschmidt01/PokeL-ARecomp/issues/7), [#12](https://github.com/fabioschmidt01/PokeL-ARecomp/issues/12)).
 - **Offline network service**: features that try to go online (for example *Connect to the internet* in the menu) are told the Switch is offline instead of crashing the game.
-- **Diagnostic log**: `lasrecomp.log` shows game speed vs real time (`[speed]`, every 10 s) and every setting changed in game (`[settings] changed`), which helps with bug reports.
+- **Diagnostic log**: `logs/lasrecomp.log` shows game speed vs real time (`[speed]`, every 10 s) and every setting changed in game (`[settings] changed`), which helps with bug reports.
 
 ### Saves & Safety
 - **Automatic Save Backup Rotation**: Creates timestamped backups in `save/backups/main_YYYYMMDD_HHMMSS.bak` whenever the game commits save data, retaining the 10 most recent copies.
-
-### Tools & Utilities
-- **PokeL-Extractor (Standalone ROM Tool)**: Bundled single-file GUI & CLI utility based on LibHac (versioned independently). Extracts Nintendo Switch dumps (`.nsp` / `.xci`) directly into the native directory tree (`exefs/` and recursive `romfs/`) with automatic BKTR patch and DLC layering, ready for instant play.
 
 ### Controls & Input
 - Any modern gamepad via SDL3: Xbox, DualShock 4, DualSense, Nintendo Switch Pro Controller, Steam Deck.
@@ -120,18 +136,13 @@ The game's ARM64 machine code is translated ahead-of-time (AOT) into C and compi
 
 ---
 
-## Standalone ROM Extractor (PokeL-Extractor)
+## Reporting a Bug
 
-Bundled with every release is **PokeL-Extractor** (`PokeL-Extractor.exe`), a standalone Nintendo Switch ROM analysis and extraction utility built with LibHac and C# / .NET 9.
+PokeL-ARecomp now has a **basic built-in bug report** (🆕 v0.27):
 
-- **Recursive Directory Scanning**: Scans entire directories and subfolders for `.nsp`, `.nsz`, `.xci`, and `.xcz` files.
-- **Automatic Title ID & CNMT Detection**: Identifies whether a dump is a **Base Game**, an **Update** (such as v262144), or **DLC**, even if files have been arbitrarily renamed.
-- **Switch Game Icon Extraction**: Reads embedded JPEG/PNG icons directly from Control NCAs and displays them in the UI.
-- **RomFS & ExeFS Extraction**: Merges BKTR base and update patches automatically into clean directories ready for PokeL-ARecomp.
-- **Real-time Progress & Telemetry**: Reports elapsed time, transfer speed (MB/s), estimated time remaining (ETA), and line-by-line logs.
-- **Dual GUI & CLI Modes**: Run interactively with the modern dark GUI or automate via terminal (`PokeL-Extractor.exe --scan <folder> --export <out>`).
-
----
+- **If the game crashes:** the crash window has a **Report on GitHub** button. One click gathers your `larecomp.ini`, the logs and your PC's details (version, OS, CPU, RAM, GPU and driver) into `logs/report-<date>/`, opens that folder and opens a new GitHub issue already filled in. **Drag the files from that folder into the issue** and add what you were doing. Nothing is sent by itself: you see everything before posting.
+- **Any other bug** (graphics, sound, controls...): open a [new issue](https://github.com/fabioschmidt01/PokeL-ARecomp/issues) and attach `larecomp.ini` and the newest `lasrecomp*.log` from the **`logs`** folder next to `PokeL-ARecomp.exe`. A screenshot (**F12**) helps a lot.
+- Turn cheats off and say which mods you use: many bugs come from them.
 
 ## Controls
 
@@ -154,9 +165,9 @@ This project stands on the shoulders of giants. We express our deepest gratitude
 
 - **[Peiikai](https://github.com/peiikai)**: Creator of [LAS Recomp](https://github.com/peiikai/LASRecomp), who invented the static recompilation architecture, ARM64-to-C ahead-of-time code translation pipeline, fast-memory execution model, and Maxwell-to-SPIR-V shader translation.
 - **[Hexveil404](https://github.com/Hexveil404)**: Creator of [PokeZ-ARecomp](https://github.com/Hexveil404/PokeZ-ARecomp), who extended LAS Recomp to modern Pokémon engine architectures, developed custom Switch OS HLE services, and proved that full Switch Pokémon titles can run natively on PC.
-- **fabioschmidt01 & Antigravity**: Architecture, Intel Xeon multi-threading, Intel Arc B580 tuning, Intel XeSS integration, HUD decoupling, standalone extractor tool, and the Pokémon Legends: Arceus & Violet ports.
+- **fabioschmidt01 & Antigravity**: Architecture, Intel Xeon multi-threading, Intel Arc B580 tuning, Intel XeSS integration, HUD decoupling, and the Pokémon Legends: Arceus & Violet ports.
 - **[didslima](https://github.com/didslima)**: Ultrawide (21:9 / 32:9) support ([#6](https://github.com/fabioschmidt01/PokeL-ARecomp/pull/6)): the Hor+ / Vert+ camera fix in the game's own projection builder, the HUD kept in its 16:9 layout, the automated projection tests, and validation on a real 32:9 monitor.
-- **[Thealexbarney](https://github.com/Thealexbarney)**: Creator of [LibHac](https://github.com/Thealexbarney/LibHac), powering our standalone `PokeL-Extractor` ROM analysis and BKTR patch merger.
+- **[Thealexbarney](https://github.com/Thealexbarney)**: Creator of [LibHac](https://github.com/Thealexbarney/LibHac), used by the start screen to read `.nsp` / `.xci` dumps and merge the update (BKTR).
 - **[Ryujinx Project](https://github.com/Ryujinx/Ryujinx)**: Exceptional behavioral reference and documentation for Nintendo Switch OS kernel and Maxwell NVN graphics behavior.
 - **Open-source libraries**: SDL3, FFmpeg, Dear ImGui, Vulkan Memory Allocator, Shaderc, XeGTAO, AMD FidelityFX, Intel XeSS.
 

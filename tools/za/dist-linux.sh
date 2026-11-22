@@ -85,6 +85,9 @@ cp third_party/fonts/DejaVu/LICENSE "$D/DejaVu-LICENSE.txt"
 cp README.md LICENSE "$D/"  # (licenses and source links of the bundled components: README "License")
 [ -f README.pt-BR.md ] && cp README.pt-BR.md "$D/"
 mkdir -p "$D/docs" && cp docs/XBOX-ATTACK-LAYOUT.md "$D/docs/"
+# the Xbox / PlayStation button icons (as tools/za/dist.sh): copied into the data folder at start (runtime/paths.c
+# sync_bundled_prompts), where the game reads them; missing before, so Linux showed the Switch's letters
+[ -d textures/prompts ] && mkdir -p "$D/textures" && cp -R textures/prompts "$D/textures/"
 cp tools/za/za-default.ini "$D/za-default.ini"  # (not larecomp.ini: the data folder holds the player's own)
 cp tools/linux/AppRun "$APPDIR/" && chmod +x "$APPDIR/AppRun"
 cat > "$APPDIR/pokelrecomp.desktop" <<EOF
