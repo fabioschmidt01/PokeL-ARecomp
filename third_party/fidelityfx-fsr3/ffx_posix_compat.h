@@ -12,6 +12,9 @@
 #include <locale>
 #include <string>
 
+// (ffx_message.cpp uses it outside Windows without including ffx_util.h: the same definition, which C++ allows twice)
+#define FFX_UNUSED(x)               ((void)(x))
+
 #ifndef _countof
 #define _countof(a) (sizeof(a) / sizeof((a)[0]))
 #endif
