@@ -4,6 +4,8 @@
 #pragma once
 #ifndef _WIN32
 #include <codecvt>
+#include <cstdarg>
+#include <cstdio>
 #include <cstddef>
 #include <cstring>
 #include <cwchar>
@@ -29,4 +31,20 @@ inline int strcpy_s(char *dst, size_t n, const char *src) {
     return 0;
 }
 template <size_t N> inline int strcpy_s(char (&dst)[N], const char *src) { return strcpy_s(dst, N, src); }
+
+
+inline int sprintf_s(char *dst, size_t n, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vsnprintf(dst, n, fmt, ap);
+    va_end(ap);
+    return r < 0 ? -1 : (size_t)r >= n ? (int)n - 1 : r;  // (the length written: the breadcrumbs advance by it)
+}
+template <size_t N> inline int sprintf_s(char (&dst)[N], const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vsnprintf(dst, N, fmt, ap);
+    va_end(ap);
+    return r < 0 ? -1 : (size_t)r >= N ? (int)N - 1 : r;
+}
 #endif

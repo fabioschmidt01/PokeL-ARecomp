@@ -55,7 +55,12 @@
 /// The size of the context specified in 32bit values.
 ///
 /// @ingroup ffxFsr3Upscaler
+#ifdef _WIN32
 #define FFX_FSR3UPSCALER_CONTEXT_SIZE (FFX_SDK_DEFAULT_CONTEXT_SIZE)
+#else  // PokeL-ARecomp: wchar_t is 4 bytes outside Windows (2 there), and the private context's resource names grow past
+       // the default size (ffx_fsr3upscaler.cpp's static assert)
+#define FFX_FSR3UPSCALER_CONTEXT_SIZE (FFX_SDK_DEFAULT_CONTEXT_SIZE * 2)
+#endif
 
 #if defined(__cplusplus)
 extern "C" {
