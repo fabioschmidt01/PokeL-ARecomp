@@ -214,7 +214,7 @@ $(B)/fsr3/%.o: $(FSR3)/src/%.cpp
 $(B)/rt/nvn/vulkan/fsr3_shaders.o: $(B)/inc/fsr3_shaders.inc
 $(B)/rt/nvn/vulkan/fsr3_shaders.o $(B)/rt/nvn/vulkan/fsr3.o: CXXFLAGS += -I$(B)/inc $(FSR3_FLAGS)
 ifeq ($(PLATFORM),linux)
-$(FSR3_OBJ) $(B)/rt/nvn/vulkan/fsr3.o $(B)/rt/nvn/vulkan/fsr3_shaders.o: CXXFLAGS += -DFFX_GCC
+$(FSR3_OBJ) $(B)/rt/nvn/vulkan/fsr3.o $(B)/rt/nvn/vulkan/fsr3_shaders.o: CXXFLAGS += -DFFX_GCC -include $(FSR3)/ffx_posix_compat.h
 endif
 
 # The shader preparation's variant list (runtime/nvn/shader_prep.h: no shader code, hashes and pipeline state only)
