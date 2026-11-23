@@ -121,6 +121,10 @@ extern __thread uint64_t maxwell_gmem_base, maxwell_gmem_size;  // (per thread: 
 // 0: one buffer.
 extern __thread uint32_t maxwell_gmem_chunk_shift;
 extern bool maxwell_gmem_lazy;
+// Graphics draws: read the guest heap through a device-local copy (exec.c gfast_prepare_gfx; LARECOMP_VK_GMEM_FAST_GFX=0
+// off). The heap is host memory across PCIe on a discrete GPU: a vertex or fragment shader reading it per invocation
+// costs 10-100x what the same read from VRAM costs, and the passes whose shaders do it were 81% of a PLA frame.
+extern bool maxwell_gmem_fast_gfx;
 // The straight-line form of forward-only branches (glsl_flatten) unless LARECOMP_SHADER_FLAT says otherwise: the
 // runtime sets it before the first translation (Vulkan: off on AMD GPUs, exec.c vk_exec_init).
 extern bool maxwell_flat_default;

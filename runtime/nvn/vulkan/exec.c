@@ -1439,6 +1439,17 @@ static void st_defaults(void) {
 }
 
 static VkPipeline pipe_resolve(void *obj, bool wait);
+// graphics gmem reads through a device-local copy (gfast_prepare_gfx): on for a discrete GPU, LARECOMP_VK_GMEM_FAST_GFX=0 off
+static bool maxwell_gmem_fast_gfx_on(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("LARECOMP_VK_GMEM_FAST_GFX");
+        on = (e ? atoi(e) != 0 : 1) && g_vk.props.deviceType != VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
+        LOG("[vk] gmem: graphics loads through a device-local copy: %s\n", on ? "on" : "off");
+    }
+    return on != 0;
+}
+
 void vk_exec_init(void) {
     maxwell_disk_cache = true;  // (translate.c: the game's translations kept in cache/maxwell)
     // The straight-line shader form (translate.c glsl_flatten, v0.1.10) off on AMD GPUs: an RX 7600 and an RX 9070 XT
@@ -1451,6 +1462,7 @@ void vk_exec_init(void) {
     if (!getenv("LARECOMP_SHADER_FLAT") && !maxwell_flat_default)
         LOG("[vk] straight-line shader form off (%s; LARECOMP_SHADER_FLAT=1: on)\n",
             fcs == GPU_OFF ? "F1 > Compatibility" : "this AMD GPU, F1 > Compatibility to turn it on");
+    maxwell_gmem_fast_gfx = maxwell_gmem_fast_gfx_on();
     prof = getenv("LARECOMP_VK_PROF") != NULL;
     if (prof) prof_up_ns = 0;
     // the GPU timer (LARECOMP_VK_GPU_TIMER=0: off - dynamic resolution then goes by the frame times)
@@ -2253,6 +2265,7 @@ static void translate_globals_set(void) {
     gmem_window_get(&wl, &wn);
     maxwell_gmem_base = gwin_base + wl, maxwell_gmem_size = wn;
     maxwell_gmem_chunk_shift = gmem_chunk_shift();
+    maxwell_gmem_fast_gfx = maxwell_gmem_fast_gfx_on();
 }
 // Translates both stages (false: failed, logged)
 static bool translate_program_now(Prog *p) {
@@ -5077,6 +5090,7 @@ static bool gmem_covers(uint64_t off, uint64_t size) {
 static VkBuffer gfast_buf;
 static VmaAllocation gfast_mem;
 static uint32_t gmap_tab[(GMAP_MAX + 1) * 4];  // this dispatch's table (stage_set copies it into binding 20)
+static uint64_t gfast_gen;  // (bumped by every compute gfast_prepare: it reuses gfast_buf from offset 0)
 static VkBufferCopy gfast_cp[GMAP_MAX];       // its copies heap -> gfast_buf
 static int gfast_n;
 // The copy back after a storing dispatch: only the bound buffers' own bytes, gfast_buf -> heap. The merged ranges
@@ -5300,6 +5314,7 @@ static void gfast_prepare(VkCommandBuffer cb) {
     gmap_tab[GMAP_MAX * 4] = (uint32_t)m;
     memcpy(gfast_cp, cp, (size_t)m * sizeof cp[0]);
     gfast_n = m;
+    gfast_gen++;
     gfast_back_n = 0;
     for (int i = 0; i < 16; i++) {  // each bound buffer's exact bytes, from wherever its merged range sits
         uint64_t a = st.sbuf[5][i].addr, sz = st.sbuf[5][i].size;
@@ -5311,6 +5326,122 @@ static void gfast_prepare(VkCommandBuffer cb) {
                 break;
             }
     }
+}
+
+// ---- graphics: the same device-local copy for a draw's vertex / fragment storage buffers
+// The heap import is host memory across PCIe on a discrete GPU: a vertex or fragment shader reading it per invocation
+// costs 10-100x the same read from VRAM (PLA: the 64x64 and 480x270 passes whose shaders do it were 81% of the frame,
+// 15.2 of 18.7 ms). translate.c emits the gfind() table lookup for a graphics load when maxwell_gmem_fast_gfx; the
+// ranges it can reach are copied here, once per submission per set of ranges - the draws of a frame share their
+// instance / bone / light buffers. Loads only: a graphics store still goes to the heap, so nothing is copied back
+// except after a storing draw (its graphics atomics wrote this copy, gfast_finish_gfx).
+static uint64_t gfx_sig, gfx_seq = ~0ull, gfx_gen;
+static int gfx_n;
+static VkBufferCopy gfx_back[GMAP_MAX];  // the bound buffers' own bytes, gfast_buf -> heap (after a storing draw)
+static int gfx_back_n;
+
+// (the copies in and out of gfast_buf, ordered against the shader reads that follow and the atomic writes that
+// precede. A full barrier here is a pipeline flush, and a pass of many small draws pays it once per draw: PLA's 64x64
+// pass has 461 draws with their own storage buffers, and 461 flushes cost 24 ms where one draw of the same pass, whose
+// ranges are already in gfast_buf, costs 5 us)
+#define GFX_SHADERS (VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT)
+static void gfx_dep(VkCommandBuffer cb, VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,
+                    VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access) {
+    VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = src_stage,
+                           .srcAccessMask = src_access, .dstStageMask = dst_stage, .dstAccessMask = dst_access};
+    VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
+    rec_CmdPipelineBarrier2(cb, &di);
+}
+
+static void gfast_prepare_gfx(VkCommandBuffer cb, uint32_t stages) {
+    memset(gmap_tab, 0, sizeof gmap_tab);
+    gfx_n = 0;
+    if (!maxwell_gmem_fast_gfx || (!gmem_buf && !gc_lazy) || gmem_lo) return;
+    gfast_info();
+    struct { uint64_t lo, hi; } r[2 * GMAP_MAX];
+    int n = 0;
+    for (int st = 0; st < 2; st++) {
+        if (!(stages & (1u << st))) continue;
+        for (int i = 0; i < 16 && n < 2 * GMAP_MAX; i++) {
+            uint64_t a = sbufs(st)[i].addr, sz = sbufs(st)[i].size;
+            if (!a || !sz || a < gwin_base || !gmem_covers(a - gwin_base, sz)) continue;
+            uint64_t lo = (a - gwin_base) & ~255ull, hi = (a - gwin_base + sz + 255) & ~255ull;
+            uint64_t top = gc_lazy ? gmem_heap_size() : gmem_size;
+            if (hi > top) hi = top;
+            if (hi <= lo) continue;
+            int k = n++;
+            while (k > 0 && r[k - 1].lo > lo) { r[k] = r[k - 1]; k--; }  // (insertion sort by start)
+            r[k].lo = lo; r[k].hi = hi;
+        }
+    }
+    if (!n) return;
+    int m = 0;
+    for (int i = 0; i < n; i++) {  // merge overlapping / nearby ranges (a small gap costs less than another table entry)
+        if (m && r[i].lo <= r[m - 1].hi + 4096) { if (r[i].hi > r[m - 1].hi) r[m - 1].hi = r[i].hi; }
+        else r[m++] = r[i];
+    }
+    if (m > GMAP_MAX) return;  // (more ranges than the table holds: the heap as before)
+    uint64_t sig = 1469598103934665603ull;
+    for (int i = 0; i < m; i++) { sig = (sig ^ r[i].lo) * 1099511628211ull; sig = (sig ^ r[i].hi) * 1099511628211ull; }
+    uint64_t seq = vk_pending_seq();
+    VkBufferCopy cp[GMAP_MAX];
+    uint64_t off = 0;
+    // (the table is built on every call, not only when the ranges are new: stage_set copies it into the draw's
+    // descriptor set, so skipping that left the table empty and every gmem read of the second draw in a submission went
+    // back to the heap - which is the common case, since the draws of a frame share their buffers. Only the copy of the
+    // ranges into gfast_buf is skipped, below.)
+    for (int i = 0; i < m; i++) {
+        uint64_t len = r[i].hi - r[i].lo;
+        if (off + len > GFAST_SIZE) return;
+        cp[i] = (VkBufferCopy){r[i].lo, off, len};
+        gmap_tab[i * 4 + 0] = (uint32_t)r[i].lo;
+        gmap_tab[i * 4 + 1] = (uint32_t)len;
+        gmap_tab[i * 4 + 2] = (uint32_t)(off >> 2);
+        off += (len + 255) & ~255ull;
+    }
+    gmap_tab[GMAP_MAX * 4] = (uint32_t)m;
+    if (sig == gfx_sig && seq == gfx_seq && gfx_gen == gfast_gen && m == gfx_n)
+        return;  // (the same ranges are already in gfast_buf from an earlier draw of this submission: only the copy is skipped)
+    gmem_copy(cb, gfast_buf, cp, m, false);
+    gfx_dep(cb, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, GFX_SHADERS,
+            VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);  // (write too: an atomic reads the copy)
+    gfx_sig = sig; gfx_seq = seq; gfx_gen = gfast_gen; gfx_n = m;
+    gfx_back_n = 0;
+    for (int st = 0; st < 2 && gfx_back_n < GMAP_MAX; st++) {  // (each bound buffer's exact bytes: the gaps are not ours)
+        if (!(stages & (1u << st))) continue;
+        for (int i = 0; i < 16 && gfx_back_n < GMAP_MAX; i++) {
+            uint64_t a = sbufs(st)[i].addr, sz = sbufs(st)[i].size;
+            if (!a || !sz || a < gwin_base || a - gwin_base + sz > (gc_lazy ? gmem_heap_size() : gmem_size)) continue;
+            uint64_t h = a - gwin_base;
+            for (int j = 0; j < m; j++)
+                if (h >= cp[j].srcOffset && h + sz <= cp[j].srcOffset + cp[j].size) {
+                    gfx_back[gfx_back_n++] = (VkBufferCopy){cp[j].dstOffset + (h - cp[j].srcOffset), h, sz};
+                    break;
+                }
+        }
+    }
+}
+
+// After a storing draw: its ranges back to the heap (a graphics atomic wrote the device-local copy, gfast_prepare_gfx;
+// the game, the CPU a frame ahead and any later draw reading the heap must see it). Only the bound buffers' own bytes.
+static void gfast_finish_gfx(VkCommandBuffer cb) {
+    if (!gfx_back_n) return;
+    if (ENV("LARECOMP_LOG_GFAST")) {
+        static int n;
+        if (n++ < 6) LOG("[gfast] gfx copy back: %d ranges\n", gfx_back_n);
+    }
+    for (int i = 0; i < gfx_back_n; i++)
+        gw_note("draw copy back", gwin_base + gfx_back[i].dstOffset, gfx_back[i].size,
+                st.program ? st.program->stages[1].code_addr : 0);
+    gfx_dep(cb, GFX_SHADERS, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
+            VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+    // (a plain copy, not the dispatch path's merge: this runs inside the draw's rendering scope, and these are the
+    // bound buffers' own bytes, which the CPU does not rewrite meanwhile - the merge pass is for a dispatch, where it does)
+    gmem_copy(cb, gfast_buf, gfx_back, gfx_back_n, true);
+    gfx_dep(cb, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+            VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+    gfx_back_n = 0;
+    gfx_sig = 0, gfx_seq = ~0ull;  // (the copy is spent: the next storing draw re-copies its ranges)
 }
 
 // After a storing dispatch: its ranges back to the heap (before anything else reads them: draws, the CPU after the fence).
@@ -7261,6 +7392,8 @@ static void draw_(CmdRec *r, bool indexed) {
     if (prof) prof_dyn += SDL_GetTicksNS() - prof_td_;
     PROF_T0();
     uint32_t dyn[2 * MAX_BIND], ndyn = 0;  // (set reuse: the sets' dynamic offsets, vertex then fragment)
+    if (maxwell_gmem_fast_gfx && ((pr->vi && pr->vi->uses_gmem_map) || (pr->fi && pr->fi->uses_gmem_map)))
+        gfast_prepare_gfx(cb, (1u << 0) | (1u << 1));  // (graphics: loads through the device-local copy)
     VkDescriptorSet vset = stage_set(pr, pr->set_layout[0], 0, 0, pr->vi, NULL, NULL, 0, 0, 0, NULL, dyn, &ndyn);
     PROF_ADD(prof_sets);
     VkDescriptorImageInfo fii[64];
@@ -7376,6 +7509,8 @@ static void draw_(CmdRec *r, bool indexed) {
                         (pr->vi->uses_gmem ? 1u << STAGE_VERTEX : 0) | (pr->fi->uses_gmem ? 1u << STAGE_FRAGMENT : 0));
     if (pr->vi->uses_gmem_store) vc_mark_sbufs(0);
     if (pr->fi->uses_gmem_store) vc_mark_sbufs(1);
+    if (maxwell_gmem_fast_gfx && gfx_back_n && (pr->vi->uses_gmem_store || pr->fi->uses_gmem_store))
+        gfast_finish_gfx(cb);  // (a graphics atomic wrote the device-local copy: its ranges back to the heap)
 
     uint64_t prof_t2_ = prof ? SDL_GetTicksNS() : 0;
     // ---- indices (copied; the largest index bounds the vertex data copied below)
