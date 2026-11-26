@@ -499,6 +499,7 @@ void vk_full_barrier(VkCommandBuffer cb) {
 static void ring_retire(void);
 void vc_flush(void);
 static void xm_copy_back(VkCommandBuffer cb);
+static void gfx_fill_invalid(void);  // (the heap changed under the graphics device copy)
 
 // ---- LARECOMP_GPUPROF_AT=<frame>: GPU time per pass / dispatch / copy of that frame, logged as "[gpuprof]".
 // A timestamp (ALL_COMMANDS: after everything before it) at each mark; a row = the work since the previous mark.
@@ -5261,6 +5262,9 @@ static void xm_copy_back(VkCommandBuffer cb) {
     rec_CmdCopyBuffer(cb, xm_buf, gmem_buf, (uint32_t)xm_back_n, xm_back);
     vk_full_barrier(cb);
     xm_back_n = 0;
+    // (the heap now holds bytes the graphics device copy does not: a later draw whose ranges it already had must not
+    // read that copy without a fresh fill - the skinned vertices the next draws read are exactly this case)
+    gfx_fill_invalid();
 }
 
 static void gfast_prepare(VkCommandBuffer cb) {
@@ -5341,9 +5345,14 @@ static void gfast_prepare(VkCommandBuffer cb) {
 // instance / bone / light buffers. Loads only: a graphics store still goes to the heap, so nothing is copied back
 // except after a storing draw (its graphics atomics wrote this copy, gfast_finish_gfx).
 static uint64_t gfx_sig, gfx_seq = ~0ull, gfx_gen;
-static int gfx_n;
-static VkBufferCopy gfx_back[GMAP_MAX];  // the bound buffers' own bytes, gfast_buf -> heap (after a storing draw)
+static int gfx_n;                          // (the map that is in gfast_buf now: what a fill left there)
+static VkBufferCopy gfx_back[GMAP_MAX];    // the bound buffers' own bytes, gfast_buf -> heap (after a storing draw)
 static int gfx_back_n;
+static bool gfx_active;                    // (this draw reads through the copy: it filled it, or found it filled)
+
+// The heap changed under the copy (transform feedback wrote into it): the next draw's ranges are copied again, whatever
+// the signature says. Not a gfast_gen bump - that one also invalidates the compute path's fill, which has its own copy.
+static void gfx_fill_invalid(void) { gfx_sig = 0, gfx_seq = ~0ull; }
 
 // (the copies in and out of gfast_buf, ordered against the shader reads that follow and the atomic writes that
 // precede. A full barrier here is a pipeline flush, and a pass of many small draws pays it once per draw: PLA's 64x64
@@ -5359,18 +5368,26 @@ static void gfx_dep(VkCommandBuffer cb, VkPipelineStageFlags2 src_stage, VkAcces
 }
 
 // What a draw reads through the device-local copy: the ranges, the gmap table, and - when they are new to this
-// submission - the copies that fill it, plus the ranges a storing draw will write back. Only computes: gfast_gfx_emit
-// records the copy and its barrier, and it must be called with no render pass open (VUID-vkCmdCopyBuffer-renderpass;
-// VUID-vkCmdPipelineBarrier2-srcStageMask-09556 / -None-09553: inside vkCmdBeginRendering only framebuffer-space
-// stages are allowed). NVIDIA tolerates both; Intel and AMD need not, and validation flags them.
-static VkBufferCopy gfx_cp[GMAP_MAX];  // heap -> gfast_buf, for the draw that found the ranges new
-static int gfx_cp_n;
+// submission - the copies that fill it. Only computes: gfast_gfx_emit records the copy and its barrier, and it must be
+// called with no render pass open (VUID-vkCmdCopyBuffer-renderpass; VUID-vkCmdPipelineBarrier2-srcStageMask-09556 /
+// -None-09553: inside vkCmdBeginRendering only framebuffer-space stages are allowed). NVIDIA tolerates both; Intel and
+// AMD need not, and validation flags them.
+static VkBufferCopy gfx_cp[GMAP_MAX];  // the map that fills gfast_buf: what a fill copied, and where
+static int gfx_cp_n;                   // (copies computed but not yet recorded by gfast_gfx_emit)
 static uint64_t gfx_want_sig, gfx_want_seq, gfx_want_gen;
 static int gfx_want_n;
 
+static void gfast_gfx_want_stat(bool skipped) {  // (debug, LARECOMP_LOG_GFAST: is the fill being skipped at all?)
+    static unsigned copied, n_skip;
+    static int on = -1;
+    if (skipped) n_skip++; else copied++;
+    if (on < 0) on = ENV("LARECOMP_LOG_GFAST") != NULL;
+    if (on && ((copied + n_skip) % 600) == 0) LOG("[gfast] gfx fill: %u copied, %u skipped\n", copied, n_skip);
+}
+
 static bool gfast_gfx_want(uint32_t stages) {
     memset(gmap_tab, 0, sizeof gmap_tab);
-    gfx_n = 0;
+    gfx_active = false;
     gfx_cp_n = 0;
     if (!maxwell_gmem_fast_gfx || (!gmem_buf && !gc_lazy) || gmem_lo) return false;
     gfast_info();
@@ -5401,6 +5418,7 @@ static bool gfast_gfx_want(uint32_t stages) {
     for (int i = 0; i < m; i++) { sig = (sig ^ r[i].lo) * 1099511628211ull; sig = (sig ^ r[i].hi) * 1099511628211ull; }
     uint64_t seq = vk_pending_seq();
     uint64_t off = 0;
+    VkBufferCopy cp[GMAP_MAX];  // (built aside: a failure below must leave the map that is in gfast_buf untouched)
     // (the table is built on every call, not only when the ranges are new: stage_set copies it into the draw's
     // descriptor set, so skipping that left the table empty and every gmem read of the second draw in a submission went
     // back to the heap - which is the common case, since the draws of a frame share their buffers. Only the copy of the
@@ -5408,31 +5426,22 @@ static bool gfast_gfx_want(uint32_t stages) {
     for (int i = 0; i < m; i++) {
         uint64_t len = r[i].hi - r[i].lo;
         if (off + len > GFAST_SIZE) return false;
-        gfx_cp[i] = (VkBufferCopy){r[i].lo, off, len};
+        cp[i] = (VkBufferCopy){r[i].lo, off, len};
         gmap_tab[i * 4 + 0] = (uint32_t)r[i].lo;
         gmap_tab[i * 4 + 1] = (uint32_t)len;
         gmap_tab[i * 4 + 2] = (uint32_t)(off >> 2);
         off += (len + 255) & ~255ull;
     }
     gmap_tab[GMAP_MAX * 4] = (uint32_t)m;
-    if (sig == gfx_sig && seq == gfx_seq && gfx_gen == gfast_gen && m == gfx_n)
+    gfx_active = true;  // (this draw reads through the copy: it fills it, or finds these ranges already there)
+    if (sig == gfx_sig && seq == gfx_seq && gfx_gen == gfast_gen && m == gfx_n) {
+        gfast_gfx_want_stat(true);
         return false;  // (the same ranges are already in gfast_buf from an earlier draw of this submission: only the copy is skipped)
+    }
+    gfast_gfx_want_stat(false);
+    memcpy(gfx_cp, cp, sizeof(VkBufferCopy) * (size_t)m);  // (committed only now: gfast_gfx_back reads the map back)
     gfx_cp_n = m;
     gfx_want_sig = sig, gfx_want_seq = seq, gfx_want_gen = gfast_gen, gfx_want_n = m;
-    gfx_back_n = 0;
-    for (int st = 0; st < 2 && gfx_back_n < GMAP_MAX; st++) {  // (each bound buffer's exact bytes: the gaps are not ours)
-        if (!(stages & (1u << st))) continue;
-        for (int i = 0; i < 16 && gfx_back_n < GMAP_MAX; i++) {
-            uint64_t a = sbufs(st)[i].addr, sz = sbufs(st)[i].size;
-            if (!a || !sz || a < gwin_base || a - gwin_base + sz > (gc_lazy ? gmem_heap_size() : gmem_size)) continue;
-            uint64_t h = a - gwin_base;
-            for (int j = 0; j < m; j++)
-                if (h >= gfx_cp[j].srcOffset && h + sz <= gfx_cp[j].srcOffset + gfx_cp[j].size) {
-                    gfx_back[gfx_back_n++] = (VkBufferCopy){gfx_cp[j].dstOffset + (h - gfx_cp[j].srcOffset), h, sz};
-                    break;
-                }
-        }
-    }
     return true;
 }
 
@@ -5451,8 +5460,30 @@ static void gfast_gfx_emit(VkCommandBuffer cb) {
     gfx_cp_n = 0;
 }
 
+// A storing draw's own bytes, to the heap when its pass ends. Computed here, at the draw that stores, and not in
+// want(): by the time the copy back runs, want() has already installed the next draw's map, and a skipped fill leaves
+// the previous map in place - the same ranges, but not necessarily the entries this draw's atomics wrote. gfx_cp /
+// gfx_n describe what is in gfast_buf at this draw, which is exactly what the atomics wrote into.
+static void gfast_gfx_back(uint32_t stages) {
+    gfx_back_n = 0;
+    for (int st = 0; st < 2 && gfx_back_n < GMAP_MAX; st++) {  // (each bound buffer's exact bytes: the gaps are not ours)
+        if (!(stages & (1u << st))) continue;
+        for (int i = 0; i < 16 && gfx_back_n < GMAP_MAX; i++) {
+            uint64_t a = sbufs(st)[i].addr, sz = sbufs(st)[i].size;
+            if (!a || !sz || a < gwin_base || a - gwin_base + sz > (gc_lazy ? gmem_heap_size() : gmem_size)) continue;
+            uint64_t h = a - gwin_base;
+            for (int j = 0; j < gfx_n; j++)
+                if (h >= gfx_cp[j].srcOffset && h + sz <= gfx_cp[j].srcOffset + gfx_cp[j].size) {
+                    gfx_back[gfx_back_n++] = (VkBufferCopy){gfx_cp[j].dstOffset + (h - gfx_cp[j].srcOffset), h, sz};
+                    break;
+                }
+        }
+    }
+    gfx_back_pending = gfx_back_n != 0;  // (nothing of this draw's is in the copy: nothing to write back)
+}
+
 // After a storing draw, at the end of its pass (vk_end_pass) or before the next draw opens one: its ranges back to the
-// heap (a graphics atomic wrote the device-local copy, gfast_gfx_want; the game, the CPU a frame ahead and any later
+// heap (a graphics atomic wrote the device-local copy, gfast_gfx_back; the game, the CPU a frame ahead and any later
 // draw reading the heap must see it). Only the bound buffers' own bytes. No render pass may be open here.
 static void gfast_finish_gfx(VkCommandBuffer cb) {
     gfx_back_pending = false;
@@ -5476,7 +5507,8 @@ static void gfast_finish_gfx(VkCommandBuffer cb) {
     gfx_dep(cb, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
             VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
     gfx_back_n = 0;
-    gfx_sig = 0, gfx_seq = ~0ull;  // (the copy is spent: the next storing draw re-copies its ranges)
+    // (the fill stays valid: these bytes now read the same from the heap and from the copy, so the next draw that wants
+    // them can still skip its copy. gfx_fill_invalid is for a writer the copy does not see - transform feedback)
 }
 
 // After a storing dispatch: its ranges back to the heap (before anything else reads them: draws, the CPU after the fence).
@@ -7208,6 +7240,7 @@ static void draw_(CmdRec *r, bool indexed) {
     // with no pass open, and only then open the pass for this draw. Nothing is recorded when the ranges the draw reads
     // are already in gfast_buf (gfast_gfx_want compares them with the last fill's).
     bool gf_fill = false;
+    gfx_active = false;  // (set by want() below, for the draws that read through the device-local copy)
     if (maxwell_gmem_fast_gfx && ((pr->vi && pr->vi->uses_gmem_map) || (pr->fi && pr->fi->uses_gmem_map)))
         gf_fill = gfast_gfx_want((1u << 0) | (1u << 1));  // (graphics: loads through the device-local copy)
     if (gfx_back_pending || gf_fill) {
@@ -7557,8 +7590,8 @@ static void draw_(CmdRec *r, bool indexed) {
                         (pr->vi->uses_gmem ? 1u << STAGE_VERTEX : 0) | (pr->fi->uses_gmem ? 1u << STAGE_FRAGMENT : 0));
     if (pr->vi->uses_gmem_store) vc_mark_sbufs(0);
     if (pr->fi->uses_gmem_store) vc_mark_sbufs(1);
-    if (maxwell_gmem_fast_gfx && gfx_back_n && (pr->vi->uses_gmem_store || pr->fi->uses_gmem_store))
-        gfx_back_pending = 1;  // (this draw writes the device-local copy: its bytes go back with no pass open - vk_end_pass)
+    if (maxwell_gmem_fast_gfx && gfx_active && (pr->vi->uses_gmem_store || pr->fi->uses_gmem_store))
+        gfast_gfx_back((1u << 0) | (1u << 1));  // (its atomics wrote the device-local copy: those bytes go back, no pass open)
 
     uint64_t prof_t2_ = prof ? SDL_GetTicksNS() : 0;
     // ---- indices (copied; the largest index bounds the vertex data copied below)
