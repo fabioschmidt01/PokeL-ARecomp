@@ -5349,10 +5349,11 @@ static int gfx_n;                          // (the map that is in gfast_buf now:
 static VkBufferCopy gfx_back[GMAP_MAX];    // the bound buffers' own bytes, gfast_buf -> heap (after a storing draw)
 static int gfx_back_n;
 static bool gfx_active;                    // (this draw reads through the copy: it filled it, or found it filled)
+static unsigned gfx_stat_copied, gfx_stat_skip, gfx_stat_reason[4], gfx_stat_invalid;  // (debug: LARECOMP_LOG_GFAST)
 
 // The heap changed under the copy (transform feedback wrote into it): the next draw's ranges are copied again, whatever
 // the signature says. Not a gfast_gen bump - that one also invalidates the compute path's fill, which has its own copy.
-static void gfx_fill_invalid(void) { gfx_sig = 0, gfx_seq = ~0ull; }
+static void gfx_fill_invalid(void) { gfx_sig = 0, gfx_seq = ~0ull; gfx_stat_invalid++; }
 
 // (the copies in and out of gfast_buf, ordered against the shader reads that follow and the atomic writes that
 // precede. A full barrier here is a pipeline flush, and a pass of many small draws pays it once per draw: PLA's 64x64
@@ -5377,12 +5378,15 @@ static int gfx_cp_n;                   // (copies computed but not yet recorded 
 static uint64_t gfx_want_sig, gfx_want_seq, gfx_want_gen;
 static int gfx_want_n;
 
-static void gfast_gfx_want_stat(bool skipped) {  // (debug, LARECOMP_LOG_GFAST: is the fill being skipped at all?)
-    static unsigned copied, n_skip;
+static void gfast_gfx_want_stat(int reason) {  // (debug, LARECOMP_LOG_GFAST: is the fill skipped, and if not, why)
     static int on = -1;
-    if (skipped) n_skip++; else copied++;
+    if (reason < 0) gfx_stat_skip++;
+    else { gfx_stat_copied++; gfx_stat_reason[reason < 3 ? reason : 3]++; }
     if (on < 0) on = ENV("LARECOMP_LOG_GFAST") != NULL;
-    if (on && ((copied + n_skip) % 600) == 0) LOG("[gfast] gfx fill: %u copied, %u skipped\n", copied, n_skip);
+    if (on && ((gfx_stat_copied + gfx_stat_skip) % 600) == 0)
+        LOG("[gfast] gfx fill: %u copied, %u skipped; not skipped: ranges %u, submission %u, refill %u, count %u; "
+            "XFB invalidations %u\n", gfx_stat_copied, gfx_stat_skip, gfx_stat_reason[0], gfx_stat_reason[1],
+            gfx_stat_reason[2], gfx_stat_reason[3], gfx_stat_invalid);
 }
 
 static bool gfast_gfx_want(uint32_t stages) {
@@ -5435,10 +5439,10 @@ static bool gfast_gfx_want(uint32_t stages) {
     gmap_tab[GMAP_MAX * 4] = (uint32_t)m;
     gfx_active = true;  // (this draw reads through the copy: it fills it, or finds these ranges already there)
     if (sig == gfx_sig && seq == gfx_seq && gfx_gen == gfast_gen && m == gfx_n) {
-        gfast_gfx_want_stat(true);
+        gfast_gfx_want_stat(-1);
         return false;  // (the same ranges are already in gfast_buf from an earlier draw of this submission: only the copy is skipped)
     }
-    gfast_gfx_want_stat(false);
+    gfast_gfx_want_stat(sig != gfx_sig ? 0 : seq != gfx_seq ? 1 : gfx_gen != gfast_gen ? 2 : 3);
     memcpy(gfx_cp, cp, sizeof(VkBufferCopy) * (size_t)m);  // (committed only now: gfast_gfx_back reads the map back)
     gfx_cp_n = m;
     gfx_want_sig = sig, gfx_want_seq = seq, gfx_want_gen = gfast_gen, gfx_want_n = m;
