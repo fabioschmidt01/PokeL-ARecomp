@@ -5140,19 +5140,34 @@ static VkDescriptorBufferInfo gfast_info(void) {
 // heap's import (host memory), every vertex was a scattered write across PCIe: 3 ms of GPU time a frame (7 with
 // mods/MaxLOD). Instead the sessions write a device-local mirror of the arena (XFB_BUFFER_INDEX), the vertex streams
 // inside parts written that way read it (guest_direct), and at each session's end the parts written are copied back
-// to the heap (one small DMA transfer), for anything else that reads them there. Ranges outside the mirror's 64 MB
-// window go to the heap as before. LARECOMP_VK_XFB_MIRROR=0: off, =1: on. Off by default on AMD GPUs (#22: an RX 9070 XT
+// to the heap (one small DMA transfer), for anything else that reads them there. Ranges outside the mirror's window go
+// to the heap as before. LARECOMP_VK_XFB_MIRROR=0: off, =1: on. Off by default on AMD GPUs (#22: an RX 9070 XT
 // lost the device on an invalid GPU read in exactly these skinning draws, with robust access on and submissions made
 // one at a time) - their transform feedback goes to the heap's import as before the mirror.
-#define XM_SIZE (64ull << 20)
+//
+// The window's size and where it sits: Z-A's arena is a few MB, PLA's skinning arena spans ~66 MB in two segments (the
+// lower one starts ~63 MB below the first buffer of a session), so the old 64 MB window 16 MB below covered only the
+// upper half. The draws that fell outside it still wrote the heap across PCIe, and every one of those stalls the GPU's
+// command front end 0.1-2 ms whatever its geometry: 22.8 such draws a frame, 10 ms of the 64x64 pass. 128 MB placed
+// 96 MB below covers the whole arena (0 slow draws, 0.42 ms a frame, 51.8 -> 57.2 fps). It costs 128 MB of
+// device-local memory, so it is only taken when the heap can spare 8 GB and maxStorageBufferRange allows it; the old
+// 64 / 16 otherwise. LARECOMP_XM_SIZE_MB / LARECOMP_XM_BELOW_MB override both. Like the placement, the size is settled
+// at the first session and does not change after it.
+#define XM_SIZE_MB 64u
+#define XM_BELOW_MB 16u
+#define XM_BIG_SIZE_MB 128u
+#define XM_BIG_BELOW_MB 96u
+#define XM_BIG_MIN_FREE (8ull << 30)  // (device-local budget this process must have left to ask for 128 MB)
 #define XM_CHUNK 256ull
 static VkBuffer xm_buf;
 static VmaAllocation xm_mem;
 static uint64_t xm_lo;  // guest address of the mirror's first byte (0: not placed yet)
+static uint64_t xm_size = (uint64_t)XM_SIZE_MB << 20;   // the window (xm_window, at the first session)
+static uint64_t xm_below = (uint64_t)XM_BELOW_MB << 20;  // how far below that first buffer it starts
 // the frame each chunk was last written by transform feedback (+1; 0: never): only this frame's are read from the
 // mirror - the game reuses the arena's memory (other data written by the CPU when areas / outfits change: read from
 // the mirror, a stale skinning drew the player black)
-static uint32_t xm_written[XM_SIZE / XM_CHUNK];
+static uint32_t *xm_written;  // (one per XM_CHUNK of the window: made with it, which can be 64 or 128 MB)
 static VkBufferCopy xm_back[256];  // this submission's written ranges (mirror -> heap)
 static int xm_back_n;
 static bool xm_draw;  // this draw's transform feedback goes to the mirror
@@ -5169,7 +5184,7 @@ static bool xm_on(void) {
     return on && g_vk.host_import;
 }
 
-static bool xm_inside(uint64_t a, uint64_t n) { return xm_lo && a >= xm_lo && a + n <= xm_lo + XM_SIZE; }
+static bool xm_inside(uint64_t a, uint64_t n) { return xm_lo && a >= xm_lo && a + n <= xm_lo + xm_size; }
 
 static bool xm_all_written(uint64_t a, uint64_t n) {
     if (!n || !xm_inside(a, n)) return false;
@@ -5179,23 +5194,67 @@ static bool xm_all_written(uint64_t a, uint64_t n) {
     return true;
 }
 
+// How big the window is and where it starts, decided once (the placement is fixed after the first session too). The
+// 128 MB form needs the device-local heap to be able to spare it: VMA's budget for a heap is the driver's estimate of
+// what this process may still allocate, so a card already holding the heap import and its texture cache says no here
+// instead of failing the allocation on the first skinning draw. Bound as one storage buffer, the window's range must
+// also fit maxStorageBufferRange (the spec's floor is exactly 128 MB), and both placements are 1 MB multiples so the
+// copy offsets stay 4-aligned after the first buffer's address is masked to 1 MB.
+static void xm_window(void) {
+    static int done;
+    if (done) return;
+    done = 1;
+    const char *es = ENV("LARECOMP_XM_SIZE_MB"), *eb = ENV("LARECOMP_XM_BELOW_MB");
+    if (es || eb) {  // (escape hatch: the one not given takes the default that goes with the size)
+        uint64_t mb = es ? strtoul(es, NULL, 10) : (eb ? XM_BIG_SIZE_MB : XM_SIZE_MB);
+        if (mb < XM_BELOW_MB) mb = XM_BELOW_MB;
+        uint64_t below = eb ? strtoul(eb, NULL, 10) : mb >= XM_BIG_SIZE_MB ? XM_BIG_BELOW_MB : XM_BELOW_MB;
+        xm_size = mb << 20, xm_below = below << 20;
+    } else {
+        const VkPhysicalDeviceMemoryProperties *mp;
+        VmaBudget b[VK_MAX_MEMORY_HEAPS];
+        uint64_t room = 0;
+        vmaGetMemoryProperties(g_vk.vma, &mp);
+        vmaGetHeapBudgets(g_vk.vma, b);
+        for (uint32_t i = 0; i < mp->memoryHeapCount; i++)
+            if ((mp->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) && b[i].budget > b[i].usage &&
+                b[i].budget - b[i].usage > room)
+                room = b[i].budget - b[i].usage;
+        if (room >= XM_BIG_MIN_FREE && g_vk.props.limits.maxStorageBufferRange >= ((uint64_t)XM_BIG_SIZE_MB << 20))
+            xm_size = (uint64_t)XM_BIG_SIZE_MB << 20, xm_below = (uint64_t)XM_BIG_BELOW_MB << 20;
+    }
+    if (xm_size > g_vk.props.limits.maxStorageBufferRange)  // (a device that reports less than the spec's floor)
+        xm_size = (uint64_t)XM_SIZE_MB << 20, xm_below = (uint64_t)XM_BELOW_MB << 20;
+    if (xm_below + (1ull << 20) > xm_size)  // (the first buffer must land inside the window)
+        xm_below = (uint64_t)XM_BELOW_MB << 20;
+    LOG("[vk] transform feedback mirror: %llu MB, %llu MB below the first buffer\n",
+        (unsigned long long)(xm_size >> 20), (unsigned long long)(xm_below >> 20));
+}
+
 // before a transform feedback draw: can its buffers all go to the mirror? (then they're marked written, and queued
 // for the copy back)
 static bool xm_prepare(void) {
     if (!xm_on() || !gmem_buf) return false;
     if (!xm_buf) {
-        VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = XM_SIZE,
+        xm_window();
+        VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = xm_size,
                                  .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
                                           VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
         VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
         if (vmaCreateBuffer(g_vk.vma, &bi, &ai, &xm_buf, &xm_mem, NULL) != VK_SUCCESS) { xm_buf = VK_NULL_HANDLE; return false; }
+        if (!xm_written && !(xm_written = calloc((size_t)(xm_size / XM_CHUNK), sizeof *xm_written))) {
+            vmaDestroyBuffer(g_vk.vma, xm_buf, xm_mem);  // (no room for the bookkeeping: the heap as before)
+            xm_buf = VK_NULL_HANDLE, xm_mem = VK_NULL_HANDLE;
+            return false;
+        }
     }
     for (int b = 0; b < 4; b++) {
         if (!xfb_addr[b] || !xfb_size[b]) continue;
-        if (!xm_lo) {  // placed around the first session's buffers (the arena is a few MB)
-            uint64_t lo = (xfb_addr[b] & ~0xFFFFFull) - (16ull << 20);
-            xm_lo = lo < gwin_base ? gwin_base : lo;
-            LOG("[vk] transform feedback mirror at %llx (+%llu MB)\n", (unsigned long long)xm_lo, (unsigned long long)(XM_SIZE >> 20));
+        if (!xm_lo) {  // placed around the first session's buffers (Z-A's arena is a few MB, PLA's ~66 MB below them)
+            uint64_t lo = (xfb_addr[b] & ~0xFFFFFull) - xm_below;
+            if (lo > xfb_addr[b]) lo = 0;  // (wrapped below address 0)
+            xm_lo = lo < gwin_base || !lo ? gwin_base : lo;
+            LOG("[vk] transform feedback mirror at %llx (+%llu MB)\n", (unsigned long long)xm_lo, (unsigned long long)(xm_size >> 20));
         }
         if ((xfb_addr[b] & 3) || !xm_inside(xfb_addr[b], xfb_size[b])) return false;
         if (!GM_IN(xfb_addr[b], xfb_size[b])) {  // (also with the whole heap imported: the mirror may reach past its end)
@@ -5684,7 +5743,7 @@ void vk_exec_reset(void) {
     gmem_size = gmem_tried = 0;
     gmem_lo = 0;
     xm_lo = 0, xm_back_n = 0;  // (the transform feedback mirror: placed again, nothing written yet)
-    memset(xm_written, 0, sizeof xm_written);
+    if (xm_written) memset(xm_written, 0, (size_t)(xm_size / XM_CHUNK) * sizeof *xm_written);
     for (int k = 0; k < gc_n; k++) {  // (lazy chunks: their pages are replaced too)
         if (gc[k].buf) { vkDestroyBuffer(g_vk.dev, gc[k].buf, NULL); vkFreeMemory(g_vk.dev, gc[k].mem, NULL); }
         memset(&gc[k], 0, sizeof gc[k]);
@@ -5918,7 +5977,7 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
             w[n].pBufferInfo = &bi[n];
         } else if (b->type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {
             bi[n] = b->binding == GFAST_BUFFER_INDEX ? gfast_info()
-                  : b->binding == XFB_BUFFER_INDEX && xm_draw ? (VkDescriptorBufferInfo){xm_buf, 0, XM_SIZE} : gmem_info();
+                  : b->binding == XFB_BUFFER_INDEX && xm_draw ? (VkDescriptorBufferInfo){xm_buf, 0, xm_size} : gmem_info();
             w[n].pBufferInfo = &bi[n];
         } else {
             continue;  // rscale / tint: written below, once the textures (and their scales) are known
