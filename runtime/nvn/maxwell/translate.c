@@ -32,6 +32,7 @@
 __thread uint64_t maxwell_gmem_base, maxwell_gmem_size;
 __thread uint32_t maxwell_gmem_chunk_shift;  // 0: one buffer for the whole heap (GLSL; shader.h)
 bool maxwell_gmem_lazy;
+bool maxwell_gmem_fast_gfx;  // (graphics: gmem loads through the gfast copy; shader.h)
 bool maxwell_flat_default = true;
 bool maxwell_gmem_fs_miss;
 const uint8_t *maxwell_dbg_code;
@@ -869,7 +870,11 @@ static void emit_atom(Ctx *c, uint64_t w, bool red) {
     strcpy(vh, size == 2 ? R(b + 1) : "0u");
     sp(&c->body, "    { ulong ga = %s - 0x%llxul; bool ok = ga < 0x%llxul; uint old = 0u, old_hi = 0u;\n", addr,
        (unsigned long long)maxwell_gmem_base, (unsigned long long)maxwell_gmem_size);
-    bool fast = c->stage == STAGE_COMPUTE;
+    // (graphics too: a per-pixel atomic to the host-memory heap is a PCIe round trip each - PLA's metering pass was 12.5
+    // of an 18.9 ms frame. The ranges it can reach come from the draw's bound storage buffers, copied device-local by
+    // exec.c gfast_prepare_gfx; an address outside them still goes to the heap below)
+    bool fast = c->stage == STAGE_COMPUTE ||
+                (maxwell_gmem_fast_gfx && (c->stage == STAGE_VERTEX || c->stage == STAGE_FRAGMENT));
     if (fast) {
         c->info->uses_gmem_map = true;
         sp(&c->body, "      uint fw = ok ? gfind(uint(ga)) : 0xFFFFFFFFu;\n");
@@ -1875,7 +1880,9 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
                                                "uint(*(device ushort *)(gmem + ga))", "uint(int(*(device short *)(gmem + ga)))"};
         int nw = size == 5 ? 2 : size >= 6 ? 4 : 1;
         bool lazy_wide = c->glsl && maxwell_gmem_chunk_shift && maxwell_gmem_lazy && nw > 1;  // (one chunk check per access)
-        if (c->glsl && c->stage == STAGE_COMPUTE) {
+        bool gfx_fast = c->glsl && maxwell_gmem_fast_gfx &&
+                        (c->stage == STAGE_VERTEX || c->stage == STAGE_FRAGMENT);
+        if (c->glsl && (c->stage == STAGE_COMPUTE || gfx_fast)) {
             // Compute (Vulkan): the guest heap is host memory across PCIe on a discrete GPU, and a shader storing to
             // it in a loop crawls (the little chain chomps in Madam MeowMeow's house: ~4 ms a dispatch, ~0.07 ms without
             // the heap stores). The dispatch's storage buffers are copied to a device-local buffer (gfast_, address
@@ -1910,6 +1917,16 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
                                d + k, k, k);
                         }
                 }
+            } else if (gfx_fast) {  // (graphics: stores stay in the heap - the copy is read-only, nothing to write back)
+                c->uses_gmem_store = true;
+                c->info->uses_gmem_store = true;
+                if (size < 4)
+                    sp(&c->body, "      if (ok) { uint wi = uint(ga >> 2); uint sh = uint(ga & %s) * 8u; GMAND(wi, ~(0x%xu << sh)); "
+                       "GMOR(wi, (%s & 0x%xu) << sh); }\n", size < 2 ? "3ul" : "2ul", size < 2 ? 0xFFu : 0xFFFFu, R(d),
+                       size < 2 ? 0xFFu : 0xFFFFu);
+                else
+                    for (int k = 0; k < nw; k++)
+                        sp(&c->body, "      if (ok) GMW(uint(ga >> 2) + %du, %s);\n", k, R(d == RZ ? RZ : d + k));
             } else {
                 c->uses_gmem_store = true;
                 c->info->uses_gmem_store = true;
@@ -3237,7 +3254,10 @@ static uint64_t cache_key(const uint8_t *blob, size_t max_size, int stage, const
         if ((((const uint64_t *)code)[i] & 0xfff0000000000000ull) == 0xe250000000000000ull) return 0;  // BRX
     // (the straight-line switch is in the key: on and off translations of one shader differ, and a GPU that changes
     // the default - AMD - or a player's LARECOMP_SHADER_FLAT must not load the other form)
-    uint64_t v[5] = {(uint64_t)stage, max_size, maxwell_gmem_base, maxwell_gmem_size, (uint64_t)maxwell_flat_on()};
+    // (the gmem table flag too: a translation made with it off has no table lookups, and once loaded from here it
+    // would stay the slow form - the folder is only emptied when the translator id changes)
+    uint64_t v[6] = {(uint64_t)stage, max_size, maxwell_gmem_base, maxwell_gmem_size, (uint64_t)maxwell_flat_on(),
+                     (uint64_t)maxwell_gmem_fast_gfx};
     uint64_t h = fnv(fnv(fnv(0xcbf29ce484222325ull, cache_build, sizeof cache_build), v, sizeof v), key, sizeof *key);
     h = fnv(h, blob, (size_t)(code - blob) + end * 8);
     return h ? h : 1;
